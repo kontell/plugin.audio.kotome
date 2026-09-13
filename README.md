@@ -11,19 +11,10 @@ control, resume across devices, and per-book playback speed memory.
 - Pitch-corrected playback speed (0.5×–5×) via
   [`inputstream.tempo`](https://github.com/kontell/inputstream.tempo).
     - Does *not* require syncing playback to display.
-- Per-book and per-podcast playback speeds, remembered between sessions.
-- Resume where ABS last had you. Position is synced back to the server while
-  you listen, and in-progress books carry a real Kodi resume point — your skin
-  draws its own progress indicator, and Kodi offers Resume or Start from
-  beginning.
-- Sorting is done by the server, so it covers the whole library rather than
-  the page on screen. The picker is on the context menu of any item.
-- The context menu also carries Hide watched, Mark as played / unplayed,
-  and Reset resume position. These act on AudioBookShelf rather than on
-  Kodi's own database, so the change follows you to your other devices.
-- Sleep timer, with a volume fade-out and an optional screen action. It stops
-  playback and leaves the screen dark, then puts your screensaver settings
-  back when you return.
+- Per-book and per-podcast playback speeds.
+- Use & set ABS resume points.
+- Sleep timer, with a volume fade-out and an optional screen action.
+- Chapters available with [Contuary](https://github.com/kontell/skin.contuary) integration.
 
 ## Installation
 
@@ -32,18 +23,18 @@ control, resume across devices, and per-book playback speed memory.
 2. From the repository, install:
    - **inputstream.tempo**
    - **Kotome**
-3. Open Kotome's settings, put your server address under *General*, and press
+3. Open Kotome's settings, enter your server address under and press
    **Sign in**. Your password is exchanged for a token and is not stored.
 
 ## Settings worth knowing
 
-- **Sleep timer → Screen action.** The screensaver options borrow Kodi's own
+- *Sleep timer → Screen action.* The screensaver options borrow Kodi's own
   screensaver and hand your settings back afterwards. *Turn the display off*
   uses DPMS, which only exists on Linux/X11 — on deviceid the screensaver is
   used instead.
-- **General → Verify HTTPS certificate.** Turn this off only for a server
-  behind a self-signed certificathi
-- **Playback → Remember speed per book/podcast.** On by default.
+- *General → Verify HTTPS certificate.* Turn this off only for a server
+  behind a self-signed certificate.
+- *Playback → Remember speed per book/podcast.* On by default.
 
 ## Supported platforms
 
