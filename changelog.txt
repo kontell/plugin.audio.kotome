@@ -1,3 +1,22 @@
+v1.0.3
+- New: Find servers on the local network. A button under Server URL,
+  visible while signed out, scans this network for AudioBookShelf and
+  fills in the one you pick.
+- New: Recently Added. On the root menu and at the top of each book
+  library, newest books first.
+- New: author photos in the information dialog (the artist/cast slot).
+- New: Reuse language invoker toggle on the General tab. On by default.
+  Turn it off if several skin widgets load plugin:// paths at once; the
+  change needs a Kodi restart.
+- Fix: opening the add-on while signed out no longer pops a sign-in
+  dialog. Widgets and library nodes were hitting that path too. The root
+  is a Sign in row; Settings is still how you reach the account.
+- Fix: podcast Recent Episodes used the wrong art (a placeholder, because
+  the listing looked for a library item the API does not nest) and prefixed
+  the show name onto the episode title. It is now a playable list in the
+  same shape as Continue Listening: episode title, show as the album,
+  show cover.
+
 v1.0.2
 - New: "Hide watched" on the context menu. It is on every item, applies to
   every listing, and stays set until you turn it off again.

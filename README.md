@@ -11,8 +11,8 @@ control, resume across devices, and per-book playback speed memory.
 
 ## Features
 
-- Browse libraries, series, collections, authors, and podcasts from your ABS
-  server.
+- Browse libraries, series, collections, authors, recently added books, and
+  podcasts from your ABS server.
 - Pitch-corrected playback speed (0.5×–5×) via
   [`inputstream.tempo`](https://github.com/kontell/inputstream.tempo).
     - Does *not* require syncing playback to display.
@@ -37,8 +37,10 @@ control, resume across devices, and per-book playback speed memory.
 2. From the repository, install:
    - **inputstream.tempo**
    - **Kotome**
-3. Open Kotome's settings, put your server address under *General*, and press
-   **Sign in**. Your password is exchanged for a token and is not stored.
+3. Open Kotome. If you are not signed in, the root is a Sign in row that
+   opens Settings. Under *General*, press **Find servers on local network**
+   or type the address, then **Sign in**. Your password is exchanged for a
+   token and is not stored.
 
 ## Settings worth knowing
 
@@ -48,6 +50,8 @@ control, resume across devices, and per-book playback speed memory.
   used instead.
 - **General → Verify HTTPS certificate.** Turn this off only for a server
   behind a self-signed certificate.
+- **General → Reuse language invoker.** On by default. Turn it off if several
+  skin widgets load plugin:// paths at once. The change needs a Kodi restart.
 - **Playback → Remember speed per book/podcast.** On by default.
 
 Kotome ships fan art, but some skins hide add-on backdrops entirely — in

@@ -34,7 +34,9 @@ jobs:
           - name: black
             command: black --check --diff .
           - name: compileall
-            command: python -m compileall -q main.py abs_api.py service.py tools/
+            command: python -m compileall -q main.py abs_api.py abs_http.py abs_auth.py abs_discovery.py addonxml.py service.py tools/
+          - name: unittest
+            command: python -m unittest discover -s tests -t . -p 'test_*.py'
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v5
