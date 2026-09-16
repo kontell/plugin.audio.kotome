@@ -60,7 +60,7 @@ def get_client():
     on every listing whose result was thrown away. An expired token announces
     itself on the next real request, and ABSClient answers it with a refresh.
 
-    Does not prompt. A missing account is a listing with a Sign in row, not
+    Does not prompt. A missing account is the root with a Settings row, not
     a dialog the user did not ask for — widgets and library nodes hit this
     path too, and a modal there is unprompted.
     """
@@ -122,7 +122,6 @@ ICON_BOOKS = os.path.join(ICON_DIR, "books.png")
 ICON_CONTINUE = os.path.join(ICON_DIR, "continue.png")
 ICON_SORT = os.path.join(ICON_DIR, "sort.png")
 ICON_NEXT = os.path.join(ICON_DIR, "navigate_next.png")
-ICON_LOGIN = os.path.join(ICON_DIR, "login.png")
 
 # The add-on's own backdrop. Declared in addon.xml <assets> too, which is what
 # the add-on browser shows — but a skin draws the background of a *listing*
@@ -854,8 +853,8 @@ def _notify(message, seconds=4):
 
 
 def route_root_signed_out():
-    """Root when there is no account: a Sign in row, no dialog."""
-    add_directory("Sign in", icon=ICON_LOGIN, action="settings")
+    """Root when there is no account: Settings, no dialog."""
+    add_directory("[COLOR gray]Settings[/COLOR]", action="settings")
     _apply_sorts((xbmcplugin.SORT_METHOD_UNSORTED,), content=CONTENT_MENU)
     xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
 
@@ -2041,6 +2040,8 @@ def router():
         return route_test_connection()
     if action == "find_servers":
         return route_find_servers()
+    if action == "settings":
+        return route_settings()
 
     client = get_client()
     if not client:
@@ -2109,8 +2110,6 @@ def router():
         )
     elif action == "reset_progress":
         route_reset_progress(client, args["progress_id"])
-    elif action == "settings":
-        route_settings()
     elif action == "speed_dialog":
         route_speed_dialog()
     elif action == "set_sleep_timer":

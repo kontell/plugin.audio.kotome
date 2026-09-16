@@ -22,7 +22,7 @@
     <summary lang="en">AudioBookShelf client with tempo</summary>
     <description lang="en">Browse and play audiobooks and podcasts from your AudioBookShelf server, at whatever speed you like. Playback speed is adjustable per book with pitch correction, progress syncs back to the server, and a sleep timer fades out and stops on its own.</description>
     <license>MIT</license>
-    <news>v1.0.3 Find servers on the local network from Settings, a Recently Added shelf for books, and podcast recent episodes that look like Continue Listening — episode title, show cover, no show name in the label. Author photos now appear in the information dialog. Opening the add-on unsigned-in no longer pops a sign-in dialog; there is a Sign in row instead. New: Reuse language invoker toggle (off if several skin widgets load plugin:// paths at once; needs a Kodi restart).</news>
+    <news>v1.1.0 Find servers on the local network from Settings, a Recently Added shelf in each book library, and podcast recent episodes that look like Continue Listening — episode title, show cover, no show name in the label. Author photos now appear in the information dialog. Opening the add-on unsigned-in no longer pops a dialog; the root is Settings. New: Reuse language invoker toggle (off if several skin widgets load plugin:// paths at once; needs a Kodi restart).</news>
     <assets>
       <icon>resources/icon.png</icon>
       <fanart>resources/fanart.jpg</fanart>
