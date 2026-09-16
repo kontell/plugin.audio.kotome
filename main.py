@@ -100,6 +100,9 @@ def get_progress_map(client):
 
 def invalidate_progress_cache():
     _progress_cache["map"] = None
+    _author_index["by_name"] = {}
+    _author_index["by_library"] = {}
+    _author_index["at"] = 0.0
 
 
 def build_url(**kwargs):
@@ -183,25 +186,101 @@ def _cover_art(client, item, item_id=None, artist=None):
     return art
 
 
-def _author_entries(client, meta):
-    """``[(name, image_url), ...]`` for the info dialog's artist/cast slots."""
-    entries = []
+# Library-item listings carry authorName but not author ids, so the info
+# dialog had a cast row with no photo. /authors has the id and imagePath;
+# look up by name. TTL matches the progress map: the listing is short-lived
+# and a second folder in the same library is free.
+_AUTHOR_TTL = 300
+_author_index = {"at": 0.0, "by_name": {}, "by_library": {}}
+
+
+def get_author_index(client, library_id=None):
+    """lowercased name -> (id, image_url). image_url is empty without imagePath."""
+    now = time.time()
+    if _author_index["by_name"] and now - _author_index["at"] < _AUTHOR_TTL:
+        if library_id:
+            return (
+                _author_index["by_library"].get(library_id) or _author_index["by_name"]
+            )
+        return _author_index["by_name"]
+
+    by_name = {}
+    by_library = {}
+    libraries = client.get_libraries()
+    for lib in libraries:
+        if lib.get("mediaType") != "book":
+            continue
+        lid = lib["id"]
+        index = {}
+        for author in client.get_authors(lid):
+            name = (author.get("name") or "").strip()
+            author_id = author.get("id") or ""
+            if not name or not author_id:
+                continue
+            thumb = (
+                client.author_image_url(author_id) if author.get("imagePath") else ""
+            )
+            rec = (author_id, thumb)
+            index[name.lower()] = rec
+            by_name[name.lower()] = rec
+        by_library[lid] = index
+    _author_index["by_name"] = by_name
+    _author_index["by_library"] = by_library
+    _author_index["at"] = now
+    if library_id:
+        return by_library.get(library_id) or by_name
+    return by_name
+
+
+def _author_names(meta):
+    """Author names on a library item, split if ABS concatenated them."""
+    names = []
     seen = set()
     for raw in meta.get("authors") or []:
         if isinstance(raw, dict):
-            name = raw.get("name") or ""
+            name = (raw.get("name") or "").strip()
             author_id = raw.get("id") or ""
-            thumb = client.author_image_url(author_id) if author_id else ""
         else:
-            name = str(raw) if raw else ""
-            thumb = ""
-        if name and name not in seen:
-            seen.add(name)
-            entries.append((name, thumb))
-    if not entries:
-        fallback = meta.get("authorName") or meta.get("author") or ""
-        if fallback:
-            entries.append((fallback, ""))
+            name = str(raw).strip() if raw else ""
+            author_id = ""
+        if name and name.lower() not in seen:
+            seen.add(name.lower())
+            names.append((name, author_id))
+    if names:
+        return names
+    fallback = (meta.get("authorName") or meta.get("author") or "").strip()
+    if not fallback:
+        return []
+    # ABS joins multiple authors with ", ". A single name can contain a
+    # comma (rare); the author index lookup is what recovers the photo, so
+    # a miss here is a missing picture rather than a wrong one.
+    for part in fallback.split(", "):
+        name = part.strip()
+        if name and name.lower() not in seen:
+            seen.add(name.lower())
+            names.append((name, ""))
+    return names
+
+
+def _author_entries(client, meta, library_id=None):
+    """``[(name, image_url), ...]`` for the info dialog's artist/cast slots.
+
+    Book listings do not include author ids. The photo comes from the
+    library's author index, keyed on name. DialogVideoInfo (which is what
+    the i button opens for these musicvideo items) draws Container(50) from
+    setCast thumbnails — ListItem.Art(artist) alone is not a slot there.
+    """
+    index = get_author_index(client, library_id)
+    entries = []
+    for name, author_id in _author_names(meta):
+        thumb = ""
+        hit = index.get(name.lower())
+        if hit:
+            author_id = author_id or hit[0]
+            thumb = hit[1]
+        if not thumb and author_id:
+            thumb = client.author_image_url(author_id)
+        entries.append((name, thumb))
     return entries
 
 
@@ -345,14 +424,22 @@ def add_playable(label, url, art=None, info=None, progress=None, context=None):
         tag.setMediaType("musicvideo")
         if info.get("title"):
             tag.setTitle(info["title"])
-        if info.get("artist"):
+        # DialogVideoInfo for musicvideo fills Container(50) from m_artist
+        # via the music library, then skips setCast when the names match.
+        # Author photos therefore have to travel as cast thumbnails, and
+        # setArtists must not repeat those names. ListItem.Artist is empty
+        # on rows that have a photo; the name is on the cast item instead.
+        cast_items = [
+            (name, thumb or "") for name, thumb in (info.get("cast") or []) if name
+        ]
+        has_cast_art = any(thumb for _name, thumb in cast_items)
+        if info.get("artist") and not has_cast_art:
             tag.setArtists([info["artist"]])
-        if info.get("cast"):
+        if cast_items:
             tag.setCast(
                 [
-                    xbmc.Actor(name, "Author", i, thumb or "")
-                    for i, (name, thumb) in enumerate(info["cast"])
-                    if name
+                    xbmc.Actor(name, "Author", i, thumb)
+                    for i, (name, thumb) in enumerate(cast_items)
                 ]
             )
         if info.get("album"):
@@ -541,7 +628,6 @@ def route_root(client):
 
     # Continue Listening
     add_directory("[B]Continue Listening[/B]", action="continue_listening")
-    add_directory("[B]Recently Added[/B]", action="recently_added")
 
     # Libraries at root level
     libraries = client.get_libraries()
@@ -1007,7 +1093,7 @@ def route_continue_listening(client):
         meta = media.get("metadata", {})
         media_type = item.get("mediaType", "book")
         item_id = item["id"]
-        authors = _author_entries(client, meta)
+        authors = _author_entries(client, meta, item.get("libraryId"))
         art = _cover_art(
             client, item, item_id=item_id, artist=_first_artist_art(authors)
         )
@@ -1295,7 +1381,7 @@ def _add_library_item(
     media = item.get("media", {})
     meta = media.get("metadata", {})
     title = meta.get("title", "Unknown")
-    authors = _author_entries(client, meta)
+    authors = _author_entries(client, meta, library_id)
     art = _cover_art(client, item, artist=_first_artist_art(authors))
     progress = (progress_map or {}).get(item["id"]) if progress_map else None
     # Series, author and collection listings already spend the single filter
@@ -1604,49 +1690,25 @@ def route_recent_episodes(client, library_id):
     xbmcplugin.endOfDirectory(HANDLE)
 
 
-def route_recently_added(client, library_id=None):
-    """Recently added books, newest first.
-
-    One library when reached from that library's menu; every book library
-    when reached from the root, merged by addedAt so two libraries do not
-    become two consecutive blocks.
-    """
-    if library_id:
-        libraries = [{"id": library_id}]
-    else:
-        libraries = [
-            lib for lib in client.get_libraries() if lib.get("mediaType") == "book"
-        ]
-    if not libraries:
+def route_recently_added(client, library_id):
+    """Recently added books in one library, newest first."""
+    if not library_id:
         xbmcplugin.endOfDirectory(HANDLE)
         return
-
+    data = client.get_library_items(
+        library_id,
+        page=0,
+        limit=50,
+        sort="addedAt",
+        desc=True,
+        filter_str=NOT_FINISHED_FILTER if hide_watched() else None,
+    )
+    if not data:
+        xbmcplugin.endOfDirectory(HANDLE)
+        return
     progress_map = get_progress_map(client)
-    collected = []
-    per_library = 50 if len(libraries) == 1 else 25
-    for lib in libraries:
-        data = client.get_library_items(
-            lib["id"],
-            page=0,
-            limit=per_library,
-            sort="addedAt",
-            desc=True,
-            filter_str=NOT_FINISHED_FILTER if hide_watched() else None,
-        )
-        if not data:
-            continue
-        for item in data.get("results", []):
-            item["_library_id"] = lib["id"]
-            collected.append(item)
-
-    if len(libraries) > 1:
-        collected.sort(key=lambda item: item.get("addedAt") or 0, reverse=True)
-        collected = collected[:50]
-
-    for item in collected:
-        _add_library_item(
-            client, item, "book", item.get("_library_id") or library_id, progress_map
-        )
+    for item in data.get("results", []):
+        _add_library_item(client, item, "book", library_id, progress_map)
 
     _apply_sorts(_SERVER_SORTED)
     xbmcplugin.endOfDirectory(HANDLE)
