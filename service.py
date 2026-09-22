@@ -10,6 +10,7 @@ import xbmcgui
 import xbmcvfs
 
 import abs_auth
+import addonxml
 from abs_api import ABSClient
 
 ADDON = xbmcaddon.Addon()
@@ -63,6 +64,32 @@ def _get_float(setting_id, default):
         return float(ADDON.getSetting(setting_id))
     except (ValueError, TypeError):
         return default
+
+
+def _addon_xml_path():
+    return os.path.join(xbmcvfs.translatePath(ADDON.getAddonInfo("path")), "addon.xml")
+
+
+def _reuse_invoker_wanted():
+    return ADDON.getSetting("reuse_language_invoker") != "false"
+
+
+def apply_reuse_invoker(notify=False):
+    """Align addon.xml with the setting. True if the file changed."""
+    wrote = addonxml.apply(_reuse_invoker_wanted(), _addon_xml_path())
+    if wrote is None:
+        xbmc.log(
+            "Kotome: reuse language invoker change did not land on addon.xml",
+            xbmc.LOGWARNING,
+        )
+        return False
+    if wrote and notify:
+        xbmcgui.Dialog().notification(
+            "Kotome",
+            ADDON.getLocalizedString(30192) or "Restart Kodi to apply this",
+            time=4000,
+        )
+    return bool(wrote)
 
 
 def write_config():
@@ -733,6 +760,12 @@ def run():
     # Seed the shared tempo config so speed.py has min/max/step ready even
     # if the user triggers keys before opening playback from Kotome.
     write_config()
+    # An addon update restores the zip's <reuselanguageinvoker>true</>, so a
+    # user who turned the setting off needs the file rewritten again. Too
+    # late for this session — ExtraInfo is already loaded — but the next
+    # Kodi start then matches.
+    apply_reuse_invoker(notify=False)
+    last_reuse = ADDON.getSetting("reuse_language_invoker")
 
     xbmc.log("Kotome service started", xbmc.LOGINFO)
 
@@ -763,6 +796,10 @@ def run():
             # Speed changes during playback are driven by inputstream.tempo's
             # keyboard/remote shortcuts which write directly to TEMPO_FILE.
             write_config()
+            reuse = ADDON.getSetting("reuse_language_invoker")
+            if reuse != last_reuse:
+                last_reuse = reuse
+                apply_reuse_invoker(notify=True)
 
         if not player.isPlaying():
             if active_session:

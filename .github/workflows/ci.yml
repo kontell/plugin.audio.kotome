@@ -45,7 +45,18 @@ jobs:
         # Replaces the py_compile block that used to live inside build.sh, so a
         # syntax error fails its own Check rather than the packaging step.
         # No mypy: see tox.ini for why, and what it would take to add.
-        run: python -m compileall -q main.py abs_api.py abs_http.py abs_auth.py service.py tools/
+        run: python -m compileall -q main.py abs_api.py abs_http.py abs_auth.py abs_discovery.py addonxml.py service.py tools/
+
+  unittest:
+    name: unittest
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: unittest
+        run: python -m unittest discover -s tests -t . -p 'test_*.py'
 
   assets:
     name: assets

@@ -17,6 +17,7 @@ import xbmcplugin
 import xbmcvfs
 
 import abs_auth
+import abs_discovery
 import abs_http
 from abs_api import ABSClient
 
@@ -52,21 +53,19 @@ def _verify_ssl():
     return ADDON.getSetting("ssl_verify") != "false"
 
 
-def get_client(prompt=True):
+def get_client():
     """The API client for the signed-in user, or None if there is not one.
 
     No round trip to check the token: that used to be a get_libraries() call
     on every listing whose result was thrown away. An expired token announces
     itself on the next real request, and ABSClient answers it with a refresh.
+
+    Does not prompt. A missing account is the root with a Settings row, not
+    a dialog the user did not ask for — widgets and library nodes hit this
+    path too, and a modal there is unprompted.
     """
     creds = abs_auth.Credentials(ADDON)
     if not creds.has_credentials:
-        if prompt:
-            xbmcgui.Dialog().ok(
-                "Kotome",
-                "Sign in to your AudioBookShelf server to get started.",
-            )
-            ADDON.openSettings()
         return None
 
     key = (creds.server_url, creds.bearer)
@@ -101,6 +100,9 @@ def get_progress_map(client):
 
 def invalidate_progress_cache():
     _progress_cache["map"] = None
+    _author_index["by_name"] = {}
+    _author_index["by_library"] = {}
+    _author_index["at"] = 0.0
 
 
 def build_url(**kwargs):
@@ -120,7 +122,6 @@ ICON_BOOKS = os.path.join(ICON_DIR, "books.png")
 ICON_CONTINUE = os.path.join(ICON_DIR, "continue.png")
 ICON_SORT = os.path.join(ICON_DIR, "sort.png")
 ICON_NEXT = os.path.join(ICON_DIR, "navigate_next.png")
-ICON_LOGIN = os.path.join(ICON_DIR, "login.png")
 
 # The add-on's own backdrop. Declared in addon.xml <assets> too, which is what
 # the add-on browser shows — but a skin draws the background of a *listing*
@@ -159,6 +160,7 @@ _ACTION_ICONS = {
     "collection_detail": "DefaultMusicPlaylists.png",
     "podcast_episodes": "DefaultAddonLyrics.png",
     "recent_episodes": "DefaultRecentlyAddedEpisodes.png",
+    "recently_added": "DefaultMusicRecentlyAdded.png",
     "search": "DefaultMusicSearch.png",
     "settings": "DefaultAddonService.png",
     "speed_dialog": "DefaultMusicSongs.png",
@@ -166,17 +168,143 @@ _ACTION_ICONS = {
 }
 
 
-def _cover_art(client, item, item_id=None):
+def _cover_art(client, item, item_id=None, artist=None):
     """Artwork for a library item, falling back to the bundled placeholder.
 
     cover_url() returns a URL whether or not the server has a cover, so an
     item without one used to render as a broken image. ABS reports what it
-    has in coverPath.
+    has in coverPath. ``artist`` is the author's image for the info dialog
+    (ListItem.Art(artist) and the cast strip); omit it when there is none.
     """
-    item_id = item_id or item["id"]
+    item_id = item_id or item.get("id") or item.get("libraryItemId")
     has_cover = bool(item.get("media", {}).get("coverPath") or item.get("coverPath"))
-    cover = client.cover_url(item_id) if has_cover else FALLBACK_COVER
-    return {"thumb": cover, "poster": cover, "icon": cover, "fanart": cover}
+    cover = client.cover_url(item_id) if has_cover and item_id else FALLBACK_COVER
+    art = {"thumb": cover, "poster": cover, "icon": cover, "fanart": cover}
+    if artist:
+        art["artist"] = artist
+    return art
+
+
+# Library-item listings carry authorName but not author ids, so the info
+# dialog had a cast row with no photo. /authors has the id and imagePath;
+# look up by name. TTL matches the progress map: the listing is short-lived
+# and a second folder in the same library is free.
+_AUTHOR_TTL = 300
+_author_index = {"at": 0.0, "by_name": {}, "by_library": {}}
+
+
+def get_author_index(client, library_id=None):
+    """lowercased name -> (id, image_url). image_url is empty without imagePath."""
+    now = time.time()
+    if _author_index["by_name"] and now - _author_index["at"] < _AUTHOR_TTL:
+        if library_id:
+            return (
+                _author_index["by_library"].get(library_id) or _author_index["by_name"]
+            )
+        return _author_index["by_name"]
+
+    by_name = {}
+    by_library = {}
+    libraries = client.get_libraries()
+    for lib in libraries:
+        if lib.get("mediaType") != "book":
+            continue
+        lid = lib["id"]
+        index = {}
+        for author in client.get_authors(lid):
+            name = (author.get("name") or "").strip()
+            author_id = author.get("id") or ""
+            if not name or not author_id:
+                continue
+            thumb = (
+                client.author_image_url(author_id) if author.get("imagePath") else ""
+            )
+            rec = (author_id, thumb)
+            index[name.lower()] = rec
+            by_name[name.lower()] = rec
+        by_library[lid] = index
+    _author_index["by_name"] = by_name
+    _author_index["by_library"] = by_library
+    _author_index["at"] = now
+    if library_id:
+        return by_library.get(library_id) or by_name
+    return by_name
+
+
+def _author_names(meta):
+    """Author names on a library item, split if ABS concatenated them."""
+    names = []
+    seen = set()
+    for raw in meta.get("authors") or []:
+        if isinstance(raw, dict):
+            name = (raw.get("name") or "").strip()
+            author_id = raw.get("id") or ""
+        else:
+            name = str(raw).strip() if raw else ""
+            author_id = ""
+        if name and name.lower() not in seen:
+            seen.add(name.lower())
+            names.append((name, author_id))
+    if names:
+        return names
+    fallback = (meta.get("authorName") or meta.get("author") or "").strip()
+    if not fallback:
+        return []
+    # ABS joins multiple authors with ", ". A single name can contain a
+    # comma (rare); the author index lookup is what recovers the photo, so
+    # a miss here is a missing picture rather than a wrong one.
+    for part in fallback.split(", "):
+        name = part.strip()
+        if name and name.lower() not in seen:
+            seen.add(name.lower())
+            names.append((name, ""))
+    return names
+
+
+def _author_entries(client, meta, library_id=None):
+    """``[(name, image_url), ...]`` for the info dialog's artist/cast slots.
+
+    Book listings do not include author ids. The photo comes from the
+    library's author index, keyed on name. DialogVideoInfo (which is what
+    the i button opens for these musicvideo items) draws Container(50) from
+    setCast thumbnails — ListItem.Art(artist) alone is not a slot there.
+    """
+    index = get_author_index(client, library_id)
+    entries = []
+    for name, author_id in _author_names(meta):
+        thumb = ""
+        hit = index.get(name.lower())
+        if hit:
+            author_id = author_id or hit[0]
+            thumb = hit[1]
+        if not thumb and author_id:
+            thumb = client.author_image_url(author_id)
+        entries.append((name, thumb))
+    return entries
+
+
+def _first_artist_art(authors):
+    for _name, thumb in authors:
+        if thumb:
+            return thumb
+    return ""
+
+
+# Runtime fallbacks for new string ids: Kodi's add-on string cache does not
+# pick those up until Kodi itself restarts, so getLocalizedString can return
+# empty after a disable/enable bounce. Settings labels have the same trap;
+# these are the strings that also appear in dialogs this process draws.
+_STRINGS = {
+    30187: "Searching for AudioBookShelf servers…",
+    30188: "Select a server",
+    30189: "No AudioBookShelf servers answered — enter the address manually",
+    30192: "Restart Kodi to apply this",
+}
+
+
+def _localize(string_id):
+    text = (ADDON.getLocalizedString(string_id) or "").strip()
+    return text or _STRINGS.get(string_id, "")
 
 
 def set_icon(li, icon):
@@ -295,8 +423,24 @@ def add_playable(label, url, art=None, info=None, progress=None, context=None):
         tag.setMediaType("musicvideo")
         if info.get("title"):
             tag.setTitle(info["title"])
-        if info.get("artist"):
+        # DialogVideoInfo for musicvideo fills Container(50) from m_artist
+        # via the music library, then skips setCast when the names match.
+        # Author photos therefore have to travel as cast thumbnails, and
+        # setArtists must not repeat those names. ListItem.Artist is empty
+        # on rows that have a photo; the name is on the cast item instead.
+        cast_items = [
+            (name, thumb or "") for name, thumb in (info.get("cast") or []) if name
+        ]
+        has_cast_art = any(thumb for _name, thumb in cast_items)
+        if info.get("artist") and not has_cast_art:
             tag.setArtists([info["artist"]])
+        if cast_items:
+            tag.setCast(
+                [
+                    xbmc.Actor(name, "Author", i, thumb)
+                    for i, (name, thumb) in enumerate(cast_items)
+                ]
+            )
         if info.get("album"):
             tag.setAlbum(info["album"])
         if info.get("duration"):
@@ -708,6 +852,89 @@ def _notify(message, seconds=4):
     xbmcgui.Dialog().notification("Kotome", message, time=seconds * 1000)
 
 
+def route_root_signed_out():
+    """Root when there is no account: Settings, no dialog."""
+    add_directory("[COLOR gray]Settings[/COLOR]", action="settings")
+    _apply_sorts((xbmcplugin.SORT_METHOD_UNSORTED,), content=CONTENT_MENU)
+    xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+
+
+def route_find_servers():
+    """Find AudioBookShelf servers on the local network and fill in the URL.
+
+    Reached from the Settings button with ``<close>true</close>``, so the
+    settings dialog is already shut. Written into an open dialog the value
+    is reverted when the user backs out. The route reopens settings
+    afterwards, so the filled field is the confirmation.
+    """
+    creds = abs_auth.Credentials(ADDON)
+    if creds.logged_in:
+        return
+
+    progress = xbmcgui.DialogProgress()
+    progress.create("Kotome", _localize(30187))
+    monitor = xbmc.Monitor()
+    cancelled = []
+
+    def should_cancel():
+        if cancelled:
+            return True
+        if progress.iscanceled() or monitor.abortRequested():
+            cancelled.append(True)
+            return True
+        return False
+
+    def on_progress(done, total):
+        if total:
+            progress.update(min(99, int(done * 100 / total)), _localize(30187))
+
+    try:
+        open_hosts = abs_discovery.find_open(
+            abs_discovery.lan_hosts(),
+            should_cancel=should_cancel,
+            on_progress=on_progress,
+        )
+    finally:
+        progress.close()
+
+    if cancelled:
+        return
+
+    http = abs_http.Http(verify=_verify_ssl(), timeout=2)
+    candidates = []
+    try:
+        for host in open_hosts:
+            address = "http://{}:{}".format(host, abs_discovery.DEFAULT_PORT)
+            try:
+                status = abs_auth.server_status(http, address)
+            except (abs_http.HttpError, abs_http.Unreachable, ValueError):
+                continue
+            if abs_discovery.is_audiobookshelf(status):
+                candidates.append((address, status))
+    finally:
+        http.close()
+
+    if not candidates:
+        # Deliberately not "try again": a host that is up answered the SYN
+        # in milliseconds, and the usual causes (another subnet, ABS bound
+        # to localhost, a reverse-proxied hostname) no retry reaches.
+        _notify(_localize(30189), seconds=6)
+        return
+
+    items = []
+    for address, status in candidates:
+        label, detail = abs_discovery.label_for(address, status)
+        items.append(xbmcgui.ListItem(label, detail))
+    choice = xbmcgui.Dialog().select(_localize(30188), items, useDetails=True)
+    if choice < 0:
+        return
+
+    address, _status = candidates[choice]
+    ADDON.setSetting("server_url", address)
+    xbmc.log("Kotome: discovery set server URL to {}".format(address), xbmc.LOGINFO)
+    xbmc.executebuiltin("Addon.OpenSettings({})".format(ADDON_ID))
+
+
 def route_login():
     """Sign in. Reached from the Settings button, so there is no handle.
 
@@ -865,8 +1092,10 @@ def route_continue_listening(client):
         meta = media.get("metadata", {})
         media_type = item.get("mediaType", "book")
         item_id = item["id"]
-
-        art = _cover_art(client, item, item_id=item_id)
+        authors = _author_entries(client, meta, item.get("libraryId"))
+        art = _cover_art(
+            client, item, item_id=item_id, artist=_first_artist_art(authors)
+        )
 
         if media_type == "podcast":
             # Show the specific in-progress episode, not the podcast folder
@@ -887,6 +1116,7 @@ def route_continue_listening(client):
             info = {
                 "title": display_title,
                 "artist": meta.get("author", ""),
+                "cast": authors,
                 "album": podcast_title,
                 "duration": duration,
                 "description": _sanitize_description(ep.get("description", "")),
@@ -921,6 +1151,7 @@ def route_continue_listening(client):
             info = {
                 "title": display_title,
                 "artist": meta.get("authorName", ""),
+                "cast": authors,
                 "album": meta.get("seriesName", ""),
                 "duration": duration,
                 "description": _sanitize_description(meta.get("description", "")),
@@ -949,6 +1180,11 @@ def route_continue_listening(client):
 def route_library(client, library_id, media_type):
     """Show sub-menus for a library."""
     if media_type == "book":
+        add_directory(
+            "Recently Added",
+            action="recently_added",
+            library_id=library_id,
+        )
         add_directory(
             "All Books",
             action="library_items",
@@ -1144,7 +1380,8 @@ def _add_library_item(
     media = item.get("media", {})
     meta = media.get("metadata", {})
     title = meta.get("title", "Unknown")
-    art = _cover_art(client, item)
+    authors = _author_entries(client, meta, library_id)
+    art = _cover_art(client, item, artist=_first_artist_art(authors))
     progress = (progress_map or {}).get(item["id"]) if progress_map else None
     # Series, author and collection listings already spend the single filter
     # ABS allows on the series/author itself, so this one is client-side.
@@ -1168,6 +1405,14 @@ def _add_library_item(
         author = meta.get("author", "")
         if author:
             tag.setArtists([author])
+        if authors:
+            tag.setCast(
+                [
+                    xbmc.Actor(name, "Author", i, thumb or "")
+                    for i, (name, thumb) in enumerate(authors)
+                    if name
+                ]
+            )
         description = meta.get("description", "")
         if description:
             tag.setPlot(_sanitize_description(description))
@@ -1183,6 +1428,7 @@ def _add_library_item(
         info = {
             "title": title,
             "artist": meta.get("authorName", ""),
+            "cast": authors,
             "album": meta.get("seriesName", ""),
             "narrator": meta.get("narratorName", ""),
             "duration": duration,
@@ -1262,7 +1508,7 @@ def route_authors_list(client, library_id):
             image = client.author_image_url(author["id"])
         else:
             image = _ACTION_ICONS["authors_list"]
-        art = {"thumb": image, "poster": image, "icon": image}
+        art = {"thumb": image, "poster": image, "icon": image, "artist": image}
         url = build_url(
             action="author_books",
             library_id=library_id,
@@ -1276,6 +1522,7 @@ def route_authors_list(client, library_id):
         tag.setMediaType("musicvideo")
         tag.setTitle(name)
         tag.setArtists([name])
+        tag.setCast([xbmc.Actor(name, "Author", 0, image)])
         description = author.get("description", "")
         if description:
             tag.setPlot(_sanitize_description(description))
@@ -1377,7 +1624,13 @@ def route_podcast_episodes(client, item_id, library_id):
 
 
 def route_recent_episodes(client, library_id):
-    """Show recently added podcast episodes."""
+    """Show recently added podcast episodes.
+
+    Same shape as Continue Listening: a playable row per episode, the
+    episode title as the label, the show in the album tag. ABS nests the
+    podcast (with coverPath) on each episode; the audio-file album tag is
+    not the show name and is not a cover.
+    """
     data = client.get_recent_episodes(library_id, limit=50)
     if not data:
         xbmcplugin.endOfDirectory(HANDLE)
@@ -1389,22 +1642,31 @@ def route_recent_episodes(client, library_id):
         item_id = ep.get("libraryItemId", "")
         ep_id = ep.get("id", "")
         ep_title = ep.get("title", "Unknown")
-        podcast_title = ep.get("audioFile", {}).get("metaTags", {}).get("tagAlbum", "")
-        duration = ep.get("audioFile", {}).get("duration", 0)
+        podcast = ep.get("podcast") or {}
+        podcast_meta = podcast.get("metadata") or {}
+        podcast_title = (
+            podcast_meta.get("title")
+            or podcast.get("title")
+            or ((ep.get("audioFile") or {}).get("metaTags") or {}).get("tagAlbum")
+            or ""
+        )
+        duration = (
+            (ep.get("audioFile") or {}).get("duration") or ep.get("duration") or 0
+        )
         ep_progress = progress_map.get("{}-{}".format(item_id, ep_id))
         if hide_watched() and (ep_progress or {}).get("isFinished"):
             continue
 
-        # The podcast name still leads the label here: this listing mixes
-        # shows, so the episode title alone is not enough to tell them apart.
-        if podcast_title:
-            label = "[B]{}[/B] - {}".format(podcast_title, ep_title)
-        else:
-            label = ep_title
-
-        art = _cover_art(client, ep.get("libraryItem") or {}, item_id=item_id)
+        cover_source = ep.get("libraryItem") or {
+            "media": podcast,
+            "coverPath": podcast.get("coverPath"),
+        }
+        art = _cover_art(client, cover_source, item_id=item_id)
+        authors = _author_entries(client, podcast_meta)
         info = {
-            "title": label,
+            "title": ep_title,
+            "artist": podcast_meta.get("author", ""),
+            "cast": authors,
             "album": podcast_title,
             "duration": duration,
             "description": _sanitize_description(ep.get("description", "")),
@@ -1412,7 +1674,7 @@ def route_recent_episodes(client, library_id):
         }
         play_url = build_url(action="play_episode", item_id=item_id, episode_id=ep_id)
         add_playable(
-            label,
+            ep_title,
             play_url,
             art=art,
             info=info,
@@ -1422,7 +1684,32 @@ def route_recent_episodes(client, library_id):
             ),
         )
 
-    _apply_sorts(_EPISODE_SORTS)
+    # Newest-first from the server; registering title sort would reorder it.
+    _apply_sorts(_SERVER_SORTED)
+    xbmcplugin.endOfDirectory(HANDLE)
+
+
+def route_recently_added(client, library_id):
+    """Recently added books in one library, newest first."""
+    if not library_id:
+        xbmcplugin.endOfDirectory(HANDLE)
+        return
+    data = client.get_library_items(
+        library_id,
+        page=0,
+        limit=50,
+        sort="addedAt",
+        desc=True,
+        filter_str=NOT_FINISHED_FILTER if hide_watched() else None,
+    )
+    if not data:
+        xbmcplugin.endOfDirectory(HANDLE)
+        return
+    progress_map = get_progress_map(client)
+    for item in data.get("results", []):
+        _add_library_item(client, item, "book", library_id, progress_map)
+
+    _apply_sorts(_SERVER_SORTED)
     xbmcplugin.endOfDirectory(HANDLE)
 
 
@@ -1659,8 +1946,14 @@ def _resolve_playback(client, item_id, episode_id=None):
     except IOError:
         pass
 
+    authors_meta = _author_entries(client, meta)
+    artist_thumb = _first_artist_art(authors_meta)
+    art = {"thumb": cover_url, "poster": cover_url, "fanart": cover_url}
+    if artist_thumb:
+        art["artist"] = artist_thumb
+
     li = xbmcgui.ListItem(path=url)
-    li.setArt({"thumb": cover_url, "poster": cover_url, "fanart": cover_url})
+    li.setArt(art)
     li.setContentLookup(False)
 
     podcast_name = meta.get("title", "")
@@ -1672,6 +1965,14 @@ def _resolve_playback(client, item_id, episode_id=None):
     vtag.setTitle(title)
     if author_str:
         vtag.setArtists([author_str])
+    if authors_meta:
+        vtag.setCast(
+            [
+                xbmc.Actor(name, "Author", i, thumb or "")
+                for i, (name, thumb) in enumerate(authors_meta)
+                if name
+            ]
+        )
     if episode_id and podcast_name:
         vtag.setAlbum(podcast_name)
     if description:
@@ -1737,16 +2038,25 @@ def router():
         return route_logout()
     if action == "test_connection":
         return route_test_connection()
+    if action == "find_servers":
+        return route_find_servers()
+    if action == "settings":
+        return route_settings()
 
     client = get_client()
     if not client:
-        xbmcplugin.endOfDirectory(HANDLE, succeeded=False)
+        if not action:
+            route_root_signed_out()
+        else:
+            xbmcplugin.endOfDirectory(HANDLE, succeeded=False)
         return
 
     if not action:
         route_root(client)
     elif action == "continue_listening":
         route_continue_listening(client)
+    elif action == "recently_added":
+        route_recently_added(client, args.get("library_id") or None)
     elif action == "library":
         route_library(client, args["library_id"], args["media_type"])
     elif action == "library_items":
@@ -1800,8 +2110,6 @@ def router():
         )
     elif action == "reset_progress":
         route_reset_progress(client, args["progress_id"])
-    elif action == "settings":
-        route_settings()
     elif action == "speed_dialog":
         route_speed_dialog()
     elif action == "set_sleep_timer":

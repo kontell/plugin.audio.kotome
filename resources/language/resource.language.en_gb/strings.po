@@ -16,12 +16,8 @@ msgctxt "#30001"
 msgid "Speed limits, step increments, resume and per-book preferences."
 msgstr ""
 
-msgctxt "#30100"
-msgid "General"
-msgstr ""
-
 msgctxt "#30101"
-msgid "Server connection details and progress sync."
+msgid "Server connection details."
 msgstr ""
 
 # Speed step
@@ -182,6 +178,46 @@ msgctxt "#30184"
 msgid "Turn this off only for a server using a self-signed certificate. It disables the check that you are talking to the server you think you are."
 msgstr ""
 
+# 30185-30189 — LAN server discovery (abs_discovery.py). #30189 names
+# manual entry rather than suggesting another go: a host that is up
+# answers the SYN in milliseconds, and the usual causes — another
+# subnet, ABS bound to localhost, a reverse-proxied hostname — no
+# number of retries reaches. Quotes #30110 verbatim.
+msgctxt "#30185"
+msgid "Find servers on local network"
+msgstr ""
+
+msgctxt "#30186"
+msgid "Looks for AudioBookShelf servers on this network and lists the ones that answer. The one you choose is filled into \"Server URL\"."
+msgstr ""
+
+msgctxt "#30187"
+msgid "Searching for AudioBookShelf servers…"
+msgstr ""
+
+msgctxt "#30188"
+msgid "Select a server"
+msgstr ""
+
+msgctxt "#30189"
+msgid "No AudioBookShelf servers answered — enter the address manually"
+msgstr ""
+
+# 30190-30192 — Advanced-tab toggle that rewrites addon.xml's
+# <reuselanguageinvoker>. #30192 is the toast after a change; Kodi only
+# rereads ExtraInfo on the next start.
+msgctxt "#30190"
+msgid "Reuse language invoker"
+msgstr ""
+
+msgctxt "#30191"
+msgid "Disable if using multiple plugin:// paths in skin widgets. Requires Kodi restart."
+msgstr ""
+
+msgctxt "#30192"
+msgid "Restart Kodi to apply this"
+msgstr ""
+
 # Sleep timer category
 msgctxt "#30200"
 msgid "Sleep timer"
@@ -277,5 +313,14 @@ msgstr ""
 
 msgctxt "#30269"
 msgid "Sleep timer minutes"
+msgstr ""
+
+# Advanced category
+msgctxt "#30300"
+msgid "Advanced"
+msgstr ""
+
+msgctxt "#30301"
+msgid "Certificate checks, progress sync, page size, and the language invoker."
 msgstr ""
 
