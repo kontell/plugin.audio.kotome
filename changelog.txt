@@ -2,7 +2,9 @@ v1.1.0
 - New: Find servers on the local network.
 - New: Recently Added, at the top of each book library.
 - New: author photos in the information dialog (the Video info cast strip).
-- New: Reuse language invoker toggle on the General tab.
+- New: Reuse language invoker toggle on the Advanced tab.
+- Settings: the first tab is Account. Verify HTTPS, progress sync, items
+  per page, and the language invoker live on Advanced.
 - Fix: opening the add-on while signed out no longer pops a dialog.
 - Fix: podcast Recent Episodes used the wrong art & description
 

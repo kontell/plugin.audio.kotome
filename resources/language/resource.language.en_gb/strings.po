@@ -16,12 +16,8 @@ msgctxt "#30001"
 msgid "Speed limits, step increments, resume and per-book preferences."
 msgstr ""
 
-msgctxt "#30100"
-msgid "General"
-msgstr ""
-
 msgctxt "#30101"
-msgid "Server connection details and progress sync."
+msgid "Server connection details."
 msgstr ""
 
 # Speed step
@@ -207,7 +203,7 @@ msgctxt "#30189"
 msgid "No AudioBookShelf servers answered — enter the address manually"
 msgstr ""
 
-# 30190-30192 — General-tab toggle that rewrites addon.xml's
+# 30190-30192 — Advanced-tab toggle that rewrites addon.xml's
 # <reuselanguageinvoker>. #30192 is the toast after a change; Kodi only
 # rereads ExtraInfo on the next start.
 msgctxt "#30190"
@@ -317,5 +313,14 @@ msgstr ""
 
 msgctxt "#30269"
 msgid "Sleep timer minutes"
+msgstr ""
+
+# Advanced category
+msgctxt "#30300"
+msgid "Advanced"
+msgstr ""
+
+msgctxt "#30301"
+msgid "Certificate checks, progress sync, page size, and the language invoker."
 msgstr ""
 

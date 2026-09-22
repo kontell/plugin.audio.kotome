@@ -1,4 +1,4 @@
-"""The General-tab toggle rewrites addon.xml's <reuselanguageinvoker>."""
+"""The Advanced-tab toggle rewrites addon.xml's <reuselanguageinvoker>."""
 
 import os
 import unittest

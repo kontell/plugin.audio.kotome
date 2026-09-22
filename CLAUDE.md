@@ -105,7 +105,7 @@ Controls whether speed.py keys/dialog are active, whether runner.py sets the `In
 
 ## Settings
 
-New format (`settings version="1"`) with string IDs in `resources/language/resource.language.en_gb/strings.po`. Playback, Sleep timer, then General.
+New format (`settings version="1"`) with string IDs in `resources/language/resource.language.en_gb/strings.po`. Account, Playback, Sleep timer, then Advanced.
 
 Two traps found the hard way:
 
