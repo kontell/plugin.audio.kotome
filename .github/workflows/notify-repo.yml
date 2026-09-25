@@ -34,7 +34,7 @@ on:
 permissions: {}
 
 env:
-  ADDON_ID: plugin.audio.koshelf
+  ADDON_ID: plugin.audio.kotome
   TARGET_REPO: kontell/repository.kontell
 
 jobs:

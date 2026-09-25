@@ -1,3 +1,115 @@
+v1.1.0
+- New: Find servers on the local network.
+- New: Recently Added, at the top of each book library.
+- New: author photos in the information dialog (the Video info cast strip).
+- New: Reuse language invoker toggle on the Advanced tab.
+- Settings: the first tab is Account. Verify HTTPS, progress sync, items
+  per page, and the language invoker live on Advanced.
+- Fix: opening the add-on while signed out no longer pops a dialog.
+- Fix: podcast Recent Episodes used the wrong art & description
+
+v1.0.2
+- New: "Hide watched" on the context menu. It is on every item, applies to
+  every listing, and stays set until you turn it off again.
+- New: "Mark as played" / "Mark as unplayed" and "Reset resume position" on
+  the context menu. Both act on AudioBookShelf, not on Kodi's own database,
+  so the change follows you to your other devices.
+- Fix: the sleep timer flashed the screen back up as it stopped playback,
+  so you were left looking at a lit UI at the moment it was meant to go
+  dark.
+- Fix: the server address is now greyed out while you are signed in.
+  Editing it would have pointed your stored tokens at a server that never
+  issued them. Sign out to change it.
+- Settings: General is the first tab, and it is one flat list — the group
+  headings and the separator between them are gone.
+
+Finished books still do not show a watched tick. Kodi draws that overlay
+only for items in its own library, and add-on items are not in it. Books
+you are part-way through are unaffected — those come from the resume
+point, which Kodi does honour.
+
+v1.0.1
+- Fix: "All Books" said "Title (A-Z)" and showed a jumble. The default sort
+  key was one AudioBookShelf does not have, and an unknown key makes the
+  server return rows in no order at all rather than reporting a problem.
+- Fix: three more sort options were silently doing nothing for the same
+  reason. Narrator and Series are removed — the server has no key for
+  either — and "Recently updated" is now "Recently changed on disk", which
+  is what it actually sorts by.
+- New sort: "Recently listened".
+
+Kotome 1.0.0 is the first release under this name. It was previously called
+Koshelf (plugin.audio.koshelf), which is no longer maintained. Kotome
+installs as a separate add-on and carries nothing over, so sign in once and
+set your preferences; uninstall Koshelf whenever you like. Entries below
+1.0.0 are Koshelf's history, kept for the record.
+
+v1.0.0
+Sleep timer
+- The screen overlay is gone. It could deadlock Kodi: the full-screen
+  window it drew outlived the service, survived the add-on being disabled,
+  and once ownerless the next Back press froze the whole UI unrecoverably.
+  The timer now uses Kodi's own screensaver and puts your screensaver
+  settings back when you return.
+- Removed Screen off (HDMI-CEC): it needs peripheral.libcec, which does not
+  exist on Android and is not on a stock desktop Kodi.
+- "Screen off (Android / Google TV)" is now "Turn the display off
+  (Linux/X11 only)", which is where DPMS actually exists. On Android the
+  screensaver is used instead.
+- New "Screensaver: my usual one" mode.
+- Fix: the idle-seconds setting used an operator Kodi does not have, so the
+  whole dependency was discarded and the setting showed even with the
+  screen action set to None.
+
+Speed
+- Browsing is roughly ten times faster. Every listing used to spend
+  0.8-1.6 s starting up before doing any work, most of it importing a
+  library that a short-lived plugin process cannot benefit from. Root menu
+  0.91 s -> 0.08 s, Authors 1.08 s -> 0.09 s on a desktop; an ARM box saves
+  considerably more.
+- The cached token is no longer checked with a throwaway API call on every
+  listing, and your progress data is fetched once rather than per folder.
+
+Browsing
+- The sort menu now works. Picking "Recently added" returned the right page
+  from the server and then Kodi re-sorted it alphabetically.
+- The sort picker moved to the context menu, so it is on every item and
+  every page rather than only at the top of page one. More sorts: author
+  Z-A, narrator, series, oldest added, published year ascending, size.
+- In-progress books and episodes carry a real Kodi resume point instead of
+  "[42%]" in the title, so skins show their own progress indicator and Kodi
+  offers Resume / Start from beginning. Finished books are marked watched.
+- Narrator, duration, genre and year moved out of the label into the info
+  tag, where the skin can lay them out.
+- Every folder has an icon. Books and Continue Listening have their own;
+  the rest use Kodi's, so they match whatever skin you run.
+- Books and podcasts with no cover on the server show a placeholder instead
+  of a broken image.
+- Added fan art. Note that some skins have fanart backgrounds turned off —
+  in Contuary it is Settings, "No fanart".
+- Removed the Music player (PAPlayer) option. It was not supported.
+- Fix: a book whose published year is a full date crashed the listing.
+
+Account
+- Your password is no longer stored. Sign in is a button in Settings that
+  asks once, exchanges it for tokens, and forgets it.
+- Uses AudioBookShelf's current token model — a one-hour access token plus
+  a refresh token, renewed automatically and again before playback starts.
+  The previous login used a token the server marks deprecated.
+- Settings shows which server and account you are signed in to, with Test
+  connection and Sign out.
+- The server address accepts a bare host name, host:port, or a full URL,
+  and is checked before you are asked for a password.
+- New: Verify HTTPS certificate, for a server behind a self-signed one.
+- Each install identifies itself to the server with its own device ID.
+
+Fixes
+- Opening Settings from the add-on menu, or hitting an unrecognised route,
+  left a directory handle open; a favourite or library node pointing at
+  either could hang.
+- A trailing slash on a plugin URL broke any route whose last parameter was
+  not the action.
+
 v0.20.0
 - Sleep timer screen options restructured: single "Screen action" setting
   with five modes — Screensaver: Black, Screensaver: Dim, Screen off

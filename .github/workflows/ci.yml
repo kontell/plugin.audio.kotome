@@ -45,7 +45,18 @@ jobs:
         # Replaces the py_compile block that used to live inside build.sh, so a
         # syntax error fails its own Check rather than the packaging step.
         # No mypy: see tox.ini for why, and what it would take to add.
-        run: python -m compileall -q main.py abs_api.py service.py tools/
+        run: python -m compileall -q main.py abs_api.py abs_http.py abs_auth.py abs_discovery.py addonxml.py service.py tools/
+
+  unittest:
+    name: unittest
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: unittest
+        run: python -m unittest discover -s tests -t . -p 'test_*.py'
 
   assets:
     name: assets
@@ -67,11 +78,24 @@ jobs:
           # os.path.join(ADDON_PATH, 'resources', 'black.png') and friends: pick
           # up the quoted segments after a resources marker.
           pattern = re.compile(r"""['"]resources['"]\s*,\s*['"]([^'"]+)['"]""")
+          # Files reached via a directory constant, e.g.
+          #   ICON_DIR = os.path.join(..., "resources", "icons")
+          #   ICON_SORT = os.path.join(ICON_DIR, "sort.png")
+          # The pattern above only sees "resources/icons", so the leaf names
+          # need their own pass or a missing icon ships unnoticed.
+          leaf = re.compile(r"""os\.path\.join\(\s*(\w*ICON_DIR)\s*,\s*['"]([^'"]+)['"]""")
+          dirs = {}
           for src in root.glob("*.py"):
               text = src.read_text(encoding="utf-8")
               for name in pattern.findall(text):
                   if not (root / "resources" / name).exists():
                       missing.append(f"{src}: resources/{name}")
+                  else:
+                      dirs.setdefault("ICON_DIR", root / "resources" / name)
+              for const, name in leaf.findall(text):
+                  base = dirs.get(const)
+                  if base is None or not (base / name).exists():
+                      missing.append(f"{src}: {const}/{name}")
           # Anything addon.xml declares as an asset must exist too.
           addon = (root / "addon.xml").read_text(encoding="utf-8")
           block = re.search(r"<assets>(.*?)</assets>", addon, re.DOTALL)
@@ -102,7 +126,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          zips=(dist/plugin.audio.koshelf-*.zip)
+          zips=(dist/plugin.audio.kotome-*.zip)
           if [[ ${#zips[@]} -ne 1 ]]; then
             echo "expected exactly one zip in dist/, got: ${zips[*]:-none}" >&2
             exit 1
@@ -122,7 +146,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: plugin.audio.koshelf-zip
+          name: plugin.audio.kotome-zip
           path: ${{ steps.name.outputs.zip }}
           retention-days: 14
           if-no-files-found: error

@@ -1,11 +1,10 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<addon id="plugin.audio.koshelf"
-       name="Koshelf"
-       version="0.20.1"
+<addon id="plugin.audio.kotome"
+       name="Kotome"
+       version="1.1.0"
        provider-name="kontell">
   <requires>
     <import addon="xbmc.python" version="3.0.0"/>
-    <import addon="script.module.requests" version="2.31.0"/>
     <import addon="inputstream.tempo" minversion="0.3.10"/>
   </requires>
   <extension point="xbmc.python.pluginsource" library="main.py">
@@ -13,13 +12,20 @@
   </extension>
   <extension point="xbmc.service" library="service.py" start="login"/>
   <extension point="xbmc.addon.metadata">
+    <!-- Keeps the interpreter alive between invocations, so the import cost
+         is paid once instead of on every folder the user opens. It is parsed
+         here and nowhere else: under xbmc.python.pluginsource, where it reads
+         as though it belongs, it is silently ignored. Requires every route to
+         close its handle — see router() in main.py. -->
+    <reuselanguageinvoker>true</reuselanguageinvoker>
     <platform>all</platform>
-    <summary lang="en">AudioBookShelf client for Kodi</summary>
-    <description lang="en">Browse and play audiobooks and podcasts from your AudioBookShelf server.</description>
+    <summary lang="en">AudioBookShelf client with tempo</summary>
+    <description lang="en">Browse and play audiobooks and podcasts from your AudioBookShelf server, at whatever speed you like. Playback speed is adjustable per book with pitch correction, progress syncs back to the server, and a sleep timer fades out and stops on its own.</description>
     <license>MIT</license>
-    <news>v0.20.0 Sleep timer: fix pulsating screensaver; add Screen off (CEC) and Screen off (Android/Google TV) options alongside screensaver modes; numeric keypad for custom duration; last-used custom value shown in presets. Widget URLs with trailing slash now resolve correctly. Remove Comment label from book/episode info dialogs. Podcast and Author items now show info on the i button.</news>
+    <news>v1.1.0 Find servers on the local network from Settings, a Recently Added shelf in each book library, and podcast recent episodes that look like Continue Listening — episode title, show cover, no show name in the label. Author photos now appear in the information dialog. Opening the add-on unsigned-in no longer pops a dialog; the root is Settings. New: Reuse language invoker toggle (off if several skin widgets load plugin:// paths at once; needs a Kodi restart).</news>
     <assets>
       <icon>resources/icon.png</icon>
+      <fanart>resources/fanart.jpg</fanart>
     </assets>
   </extension>
 </addon>

@@ -1,4 +1,4 @@
-"""Koshelf - background service for playback progress sync, resume, and audiobook features."""
+"""Kotome - background service for playback progress sync, resume, and audiobook features."""
 
 import json
 import os
@@ -9,19 +9,54 @@ import xbmcaddon
 import xbmcgui
 import xbmcvfs
 
+import abs_auth
+import addonxml
 from abs_api import ABSClient
 
 ADDON = xbmcaddon.Addon()
-ADDON_PATH = xbmcvfs.translatePath(ADDON.getAddonInfo("path"))
 PROFILE_DIR = xbmcvfs.translatePath(ADDON.getAddonInfo("profile"))
 SESSION_FILE = os.path.join(PROFILE_DIR, "session.json")
 SPEEDS_FILE = os.path.join(PROFILE_DIR, "speeds.json")
 SLEEP_FILE = os.path.join(PROFILE_DIR, "sleep_timer")
 SLEEP_STATE_FILE = os.path.join(PROFILE_DIR, "sleep_state.json")
-TOKEN_FILE = os.path.join(PROFILE_DIR, "token.json")
-TEMPO_FILE = xbmcvfs.translatePath("special://temp/inputstream_tempo")
-CONFIG_FILE = xbmcvfs.translatePath("special://temp/inputstream_tempo_config")
+# Our own rate and config files, named in the sentinel so inputstream.tempo's
+# keymap acts on ours and not on another add-on's. A patched YouTube drives
+# the same add-on; on the shared paths an audiobook at 2.0x and a video at
+# 1.5x overwrote each other's rate.
+OWNER = "plugin.audio.kotome"
+TEMPO_FILE = xbmcvfs.translatePath("special://temp/inputstream_tempo." + OWNER)
+CONFIG_FILE = xbmcvfs.translatePath("special://temp/inputstream_tempo_config." + OWNER)
+# The sentinel stays shared: it is the single "the keys are live" flag.
 ACTIVE_FILE = xbmcvfs.translatePath("special://temp/inputstream_tempo_active")
+
+
+def _sentinel_owner():
+    """The add-on named in the sentinel, or None if it is not in keyed form."""
+    try:
+        with open(ACTIVE_FILE) as f:
+            content = f.read()
+    except (IOError, OSError):
+        return None
+    for line in content.splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key.strip() == "addon":
+            return value.strip()
+    return None
+
+
+def _release_sentinel():
+    """Give the tempo speed keys back, if we were the ones holding them.
+
+    Kodi's player state is global, so this stop path also runs when something
+    else was playing — removing the sentinel unconditionally took the keys
+    away from whichever add-on had armed them.
+    """
+    if _sentinel_owner() != OWNER:
+        return
+    try:
+        os.remove(ACTIVE_FILE)
+    except OSError:
+        pass
 
 
 def _get_float(setting_id, default):
@@ -29,6 +64,32 @@ def _get_float(setting_id, default):
         return float(ADDON.getSetting(setting_id))
     except (ValueError, TypeError):
         return default
+
+
+def _addon_xml_path():
+    return os.path.join(xbmcvfs.translatePath(ADDON.getAddonInfo("path")), "addon.xml")
+
+
+def _reuse_invoker_wanted():
+    return ADDON.getSetting("reuse_language_invoker") != "false"
+
+
+def apply_reuse_invoker(notify=False):
+    """Align addon.xml with the setting. True if the file changed."""
+    wrote = addonxml.apply(_reuse_invoker_wanted(), _addon_xml_path())
+    if wrote is None:
+        xbmc.log(
+            "Kotome: reuse language invoker change did not land on addon.xml",
+            xbmc.LOGWARNING,
+        )
+        return False
+    if wrote and notify:
+        xbmcgui.Dialog().notification(
+            "Kotome",
+            ADDON.getLocalizedString(30192) or "Restart Kodi to apply this",
+            time=4000,
+        )
+    return bool(wrote)
 
 
 def write_config():
@@ -86,20 +147,18 @@ def save_book_speed(item_id, speed):
 
 
 def get_client():
-    server_url = ADDON.getSetting("server_url")
-    username = ADDON.getSetting("username")
-    password = ADDON.getSetting("password")
-    if not server_url or not (username and password):
+    """The API client for the signed-in user, or None.
+
+    Reads the same stored credentials main.py writes, and gets the same
+    refresh-on-401 behaviour: the service outlives any one access token by
+    hours, so this is the process that needs it most.
+    """
+    creds = abs_auth.Credentials(ADDON)
+    if not creds.has_credentials:
         return None
-    try:
-        if os.path.exists(TOKEN_FILE):
-            with open(TOKEN_FILE, "r") as f:
-                cached = json.load(f).get("token", "")
-                if cached:
-                    return ABSClient(server_url, token=cached)
-    except Exception:
-        pass
-    return ABSClient(server_url, username=username, password=password)
+    return ABSClient.from_credentials(
+        creds, verify=ADDON.getSetting("ssl_verify") != "false"
+    )
 
 
 def find_chapter(chapters, current_time):
@@ -126,16 +185,16 @@ def _close_active_session(client, session, label="session"):
     try:
         if last < 5 and start > 30:
             xbmc.log(
-                "Koshelf: skip sync on close ({} last={:.0f}s, "
+                "Kotome: skip sync on close ({} last={:.0f}s, "
                 "start={:.0f}s — playback never resumed)".format(label, last, start),
                 xbmc.LOGINFO,
             )
         else:
             client.sync_session(sid, last, dur, 0)
         client.close_session(sid)
-        xbmc.log("Koshelf: closed {} {}".format(label, sid), xbmc.LOGINFO)
+        xbmc.log("Kotome: closed {} {}".format(label, sid), xbmc.LOGINFO)
     except Exception as e:
-        xbmc.log("Koshelf: error closing {}: {}".format(label, e), xbmc.LOGWARNING)
+        xbmc.log("Kotome: error closing {}: {}".format(label, e), xbmc.LOGWARNING)
 
 
 def _jsonrpc(method, params=None):
@@ -147,32 +206,79 @@ def _jsonrpc(method, params=None):
         resp = json.loads(xbmc.executeJSONRPC(json.dumps(req)))
         return resp.get("result", {}) or {}
     except Exception as e:
-        xbmc.log("Koshelf: JSON-RPC error ({}): {}".format(method, e), xbmc.LOGWARNING)
+        xbmc.log("Kotome: JSON-RPC error ({}): {}".format(method, e), xbmc.LOGWARNING)
         return {}
 
 
-class _ScreenOverlay(xbmcgui.WindowDialog):
-    """Full-screen black or dim overlay. Bypasses Kodi's screensaver system
-    entirely — works even during VideoPlayer playback (which inhibits the
-    normal screensaver)."""
+# Consecutive polls of an inactive screensaver that mean the user is really
+# back, rather than the momentary drop every Player.Stop causes. At the loop's
+# 0.25 s tick this is a fifth of a second of confirmation.
+WAKE_CONFIRM_POLLS = 3
 
-    _BLACK_IMG = os.path.join(ADDON_PATH, "resources", "black.png")
+# Kodi settings the screensaver action has to borrow, and put back.
+SETTING_SAVER_MODE = "screensaver.mode"
+SETTING_SAVER_AUDIO = "screensaver.disableforaudio"
 
-    def __init__(self, dim=False):
-        super().__init__()
-        color = "CC000000" if dim else "FF000000"
-        try:
-            w = int(xbmcgui.getScreenWidth())
-            h = int(xbmcgui.getScreenHeight())
-        except (AttributeError, TypeError):
-            w, h = 1920, 1080
-        img = xbmcgui.ControlImage(0, 0, w, h, self._BLACK_IMG, colorDiffuse=color)
-        self.addControl(img)
+# Screensaver add-ons Kodi always ships, used when an action names a look.
+SAVER_BLACK = "screensaver.xbmc.builtin.black"
+SAVER_DIM = "screensaver.xbmc.builtin.dim"
+
+_SAVER_FOR_ACTION = {
+    "screensaver_black": SAVER_BLACK,
+    "screensaver_dim": SAVER_DIM,
+    "screensaver_user": None,  # whatever the user already configured
+}
+
+# Values written by versions that drove the screen directly. Both mechanisms
+# they named are no-ops on Android and neither survived testing on Linux, so
+# they are folded into the screensaver path rather than left to fail quietly.
+_LEGACY_ACTIONS = {
+    "screen_off_cec": "screensaver_black",
+    "screen_off_android": "screen_off",
+}
+
+
+def _normalise_screen_action(value):
+    """Current name for a possibly-legacy sleep_screen_action value."""
+    return _LEGACY_ACTIONS.get(value, value or "screensaver_black")
+
+
+def _get_setting(setting_id):
+    """Read a Kodi (not add-on) setting, or None if it could not be read."""
+    result = _jsonrpc("Settings.GetSettingValue", {"setting": setting_id})
+    return result.get("value") if "value" in result else None
+
+
+def _set_setting(setting_id, value):
+    _jsonrpc("Settings.SetSettingValue", {"setting": setting_id, "value": value})
+
+
+# Window properties are a public interface: a skin can be keyed on them, and
+# renaming one breaks it with no warning and no error. Both names are written
+# for the whole 1.x line; the Koshelf.* aliases go in 2.0.
+_PROPERTY_PREFIXES = ("Kotome", "Koshelf")
+
+_PROPERTY_NAMES = (
+    "ChapterName",
+    "NowPlaying.Title",
+    "NowPlaying.Author",
+    "SleepTimerRemaining",
+)
+
+
+def _set_property(win, name, value):
+    for prefix in _PROPERTY_PREFIXES:
+        win.setProperty("{}.{}".format(prefix, name), value)
+
+
+def _clear_property(win, name):
+    for prefix in _PROPERTY_PREFIXES:
+        win.clearProperty("{}.{}".format(prefix, name))
 
 
 class SleepModeController:
-    """Owns sleep-timer side effects: screen overlay, volume ramp-down,
-    and crash recovery.
+    """Owns sleep-timer side effects: screen action, volume ramp-down, and
+    crash recovery.
 
     The controller is driven by the existence of SLEEP_FILE — main.py writes
     it (epoch seconds = end_time) to start a timer. The service polls it and
@@ -181,10 +287,23 @@ class SleepModeController:
 
     Screen action modes (sleep_screen_action setting):
       none              — don't touch the screen
-      screensaver_black — full-screen black overlay after idle
-      screensaver_dim   — semi-transparent black overlay after idle
-      screen_off_cec    — send CEC standby after idle
-      screen_off_android — toggle DPMS after idle (Linux/Android)
+      screensaver_black — Kodi's screensaver, forced to Black, after idle
+      screensaver_dim   — Kodi's screensaver, forced to Dim, after idle
+      screensaver_user  — Kodi's screensaver, the user's own choice
+      screen_off        — power the display down via DPMS (Linux/X11 only)
+
+    Earlier versions drew a full-screen xbmcgui.WindowDialog instead of using
+    Kodi's screensaver. That is gone. A Python window outlives the script that
+    created it, survives the add-on being disabled, and once ownerless the next
+    Back press deadlocks Kodi's application thread inside
+    CScriptInvocationManager::Process() — an unrecoverable whole-UI freeze that
+    lands on the user while they are asleep. Verified on 21.3 with a gdb
+    backtrace; only SIGKILL ended it.
+
+    Two Kodi settings have to be borrowed for the screensaver path and put back
+    afterwards: screensaver.mode, because an empty mode ("None") draws nothing,
+    and screensaver.disableforaudio, which defaults to true and otherwise makes
+    ActivateScreenSaver a silent no-op during audio playback.
     """
 
     def __init__(self):
@@ -194,26 +313,39 @@ class SleepModeController:
         self.user_overrode_volume = False
         self._screen_action_fired = False
         self._screen_action = "none"
-        self._overlay = None
+        self._saved_saver_mode = None
+        self._saved_saver_audio = None
+        self._awaiting_wake = False
+        self._redarken_pending = False
+        self._wake_polls = 0
         if os.path.exists(SLEEP_STATE_FILE) and not os.path.exists(SLEEP_FILE):
             self._restore_from_state_file()
 
     def _restore_from_state_file(self):
+        """Put back what a Kodi killed mid-timer left changed.
+
+        Without this the user is left with their screensaver disabled, audio
+        screensavers silently re-enabled, and the volume wherever the ramp had
+        got to — permanently, with nothing to explain it.
+        """
         try:
             with open(SLEEP_STATE_FILE) as f:
                 state = json.load(f)
             vol = state.get("volume")
             if vol is not None:
                 _jsonrpc("Application.SetVolume", {"volume": int(vol)})
-            action = state.get("screen_action", "")
-            if action == "screen_off_android":
+            if state.get("saver_mode") is not None:
+                _set_setting(SETTING_SAVER_MODE, state["saver_mode"])
+            if state.get("saver_audio") is not None:
+                _set_setting(SETTING_SAVER_AUDIO, bool(state["saver_audio"]))
+            if state.get("screen_action") == "screen_off":
                 if xbmc.getCondVisibility("System.DPMSActive"):
                     xbmc.executebuiltin("ToggleDPMS")
             os.remove(SLEEP_STATE_FILE)
-            xbmc.log("Koshelf: restored orphaned sleep-mode state", xbmc.LOGINFO)
+            xbmc.log("Kotome: restored orphaned sleep-mode state", xbmc.LOGINFO)
         except Exception as e:
             xbmc.log(
-                "Koshelf: error restoring sleep state: {}".format(e), xbmc.LOGWARNING
+                "Kotome: error restoring sleep state: {}".format(e), xbmc.LOGWARNING
             )
 
     def tick(self, player, win):
@@ -228,7 +360,7 @@ class SleepModeController:
             self._enter()
         elif not sleep_file_exists and self.active:
             self._exit()
-            win.clearProperty("Koshelf.SleepTimerRemaining")
+            _clear_property(win, "SleepTimerRemaining")
             return False
 
         if not self.active:
@@ -239,19 +371,19 @@ class SleepModeController:
                 end_time = float(f.read().strip())
         except Exception:
             self._exit()
-            win.clearProperty("Koshelf.SleepTimerRemaining")
+            _clear_property(win, "SleepTimerRemaining")
             return False
 
         remaining = end_time - time.time()
 
         if remaining <= 0:
             self._expire(player)
-            win.clearProperty("Koshelf.SleepTimerRemaining")
+            _clear_property(win, "SleepTimerRemaining")
             return True
 
         mins = int(remaining) // 60
         secs = int(remaining) % 60
-        win.setProperty("Koshelf.SleepTimerRemaining", "{}:{:02d}".format(mins, secs))
+        _set_property(win, "SleepTimerRemaining", "{}:{:02d}".format(mins, secs))
 
         self._maybe_fire_screen_action()
         self._maybe_ramp_volume(remaining)
@@ -268,40 +400,68 @@ class SleepModeController:
                 pass
         if self.active:
             self._exit()
-        win.clearProperty("Koshelf.SleepTimerRemaining")
+        _clear_property(win, "SleepTimerRemaining")
 
     def _enter(self):
         self.active = True
         self.user_overrode_volume = False
         self._screen_action_fired = False
-        self._screen_action = (
-            ADDON.getSetting("sleep_screen_action") or "screensaver_black"
+        self._screen_action = _normalise_screen_action(
+            ADDON.getSetting("sleep_screen_action")
         )
+        if self._screen_action == "screen_off" and xbmc.getCondVisibility(
+            "System.Platform.Android"
+        ):
+            # Kodi has no DPMS implementation on Android: the builtin returns
+            # without acting and without logging. Fall back to the screensaver
+            # rather than promise a dark screen we cannot deliver.
+            xbmc.log(
+                "Kotome: screen_off is Linux/X11 only — using the screensaver "
+                "on this platform",
+                xbmc.LOGINFO,
+            )
+            self._screen_action = "screensaver_black"
+
         vol = _jsonrpc("Application.GetProperties", {"properties": ["volume"]}).get(
             "volume"
         )
         self.original_volume = vol
         self.last_applied_volume = vol
+
+        self._saved_saver_mode = None
+        self._saved_saver_audio = None
+        if self._screen_action in _SAVER_FOR_ACTION:
+            self._saved_saver_mode = _get_setting(SETTING_SAVER_MODE)
+            self._saved_saver_audio = _get_setting(SETTING_SAVER_AUDIO)
+
         try:
             with open(SLEEP_STATE_FILE, "w") as f:
-                json.dump({"volume": vol, "screen_action": self._screen_action}, f)
+                json.dump(
+                    {
+                        "volume": vol,
+                        "screen_action": self._screen_action,
+                        "saver_mode": self._saved_saver_mode,
+                        "saver_audio": self._saved_saver_audio,
+                    },
+                    f,
+                )
         except IOError:
             pass
         xbmc.log(
-            "Koshelf: sleep mode entered (action={}, "
+            "Kotome: sleep mode entered (action={}, "
             "volume={})".format(self._screen_action, vol),
             xbmc.LOGINFO,
         )
 
     def _exit(self):
-        """Restore screen and volume — called on cancel or manual stop."""
-        self._close_overlay()
+        """Restore screen and volume — called on cancel or manual stop.
+
+        The user is present, so this wakes the screen as well as putting the
+        settings back.
+        """
         if self._screen_action_fired:
-            if self._screen_action == "screen_off_cec":
-                xbmc.executebuiltin("CECActivateSource")
-            elif self._screen_action == "screen_off_android":
-                if xbmc.getCondVisibility("System.DPMSActive"):
-                    xbmc.executebuiltin("ToggleDPMS")
+            self._wake_screen()
+        self._restore_saver_settings()
         if self.original_volume is not None and not self.user_overrode_volume:
             _jsonrpc("Application.SetVolume", {"volume": int(self.original_volume)})
         try:
@@ -309,16 +469,12 @@ class SleepModeController:
                 os.remove(SLEEP_STATE_FILE)
         except OSError:
             pass
-        xbmc.log("Koshelf: sleep mode exited", xbmc.LOGINFO)
-        self.active = False
-        self.original_volume = None
-        self.last_applied_volume = None
-        self.user_overrode_volume = False
-        self._screen_action_fired = False
+        xbmc.log("Kotome: sleep mode exited", xbmc.LOGINFO)
+        self._reset()
 
     def _expire(self, player):
         """Timer fired — stop playback, restore volume, leave screen dark."""
-        xbmc.log("Koshelf: sleep timer expired, stopping playback", xbmc.LOGINFO)
+        xbmc.log("Kotome: sleep timer expired, stopping playback", xbmc.LOGINFO)
         try:
             player.stop()
         except Exception:
@@ -329,35 +485,137 @@ class SleepModeController:
             pass
         if self.original_volume is not None and not self.user_overrode_volume:
             _jsonrpc("Application.SetVolume", {"volume": int(self.original_volume)})
-        # Leave overlay/screen-off in place — user is asleep. The overlay
-        # will be garbage-collected when the service restarts, and CEC/DPMS
-        # stays off until user input.
+
+        if self._screen_action_fired and self._screen_action in _SAVER_FOR_ACTION:
+            # Re-arm before returning, not on the next poll. Stopping playback
+            # drops the screensaver, and the loop's 0.25 s tick plus the
+            # caching teardown was long enough to show the UI again — a
+            # visible flash of light at the exact moment the user is being
+            # left in the dark. Reported on a Bravia.
+            if not xbmc.getCondVisibility("System.ScreenSaverActive"):
+                xbmc.executebuiltin("ActivateScreenSaver")
+            # Leave the screen dark. The user is asleep; restoring
+            # screensaver.mode now would deactivate the screensaver and light
+            # the room back up, which is the opposite of what they asked for.
+            # The borrowed settings are put back when they come back —
+            # see await_wake() — and sleep_state.json stays on disk until then
+            # so a Kodi killed overnight still recovers them on next start.
+            self._awaiting_wake = True
+            # Still armed: player.stop() can complete after this point, and
+            # the drop that follows it is what the poll catches.
+            self._redarken_pending = True
+            self._wake_polls = 0
+            xbmc.log(
+                "Kotome: screen left dark; settings restore deferred to wake",
+                xbmc.LOGINFO,
+            )
+        else:
+            self._restore_saver_settings()
+            self._clear_state_file()
+        self._reset(keep_awaiting=True)
+
+    def _clear_state_file(self):
         try:
             if os.path.exists(SLEEP_STATE_FILE):
                 os.remove(SLEEP_STATE_FILE)
         except OSError:
             pass
+
+    def await_wake(self, playing_again=False):
+        """Hold the screen dark after expiry, then hand the settings back.
+
+        Stopping playback deactivates Kodi's screensaver — measured on 21.3:
+        System.ScreenSaverActive goes true on activation and false the moment
+        Player.Stop lands. So the stop that ends the timer also lights the
+        room back up unless the screensaver is put straight back. That is done
+        exactly once, on the first poll after expiry.
+
+        After that, the screensaver going *and staying* inactive means the
+        user is back, and the borrowed settings are returned. Two things this
+        deliberately does not do:
+
+        - it does not re-arm the screensaver repeatedly. A poll that
+          reactivates on every tick fights the user for control of their own
+          screen, and they cannot win it from a remote.
+        - it does not key off getGlobalIdleTime(). Input delivered over
+          JSON-RPC does not move that clock, so anything driven by it cannot
+          be tested, and an untestable wake condition on a feature that runs
+          overnight is not worth having.
+
+        GUI.OnScreensaverDeactivated is not used either: it is never announced
+        when screensaver.mode is empty, which is the state most installs are
+        in and precisely the state being restored.
+        """
+        if not self._awaiting_wake:
+            return
+
+        saver_up = xbmc.getCondVisibility("System.ScreenSaverActive")
+
+        if self._redarken_pending and not playing_again:
+            # First poll after the stop: put the screen back the way the timer
+            # promised, then leave it alone.
+            self._redarken_pending = False
+            if not saver_up:
+                xbmc.executebuiltin("ActivateScreenSaver")
+            self._wake_polls = 0
+            return
+
+        if not playing_again:
+            if saver_up:
+                self._wake_polls = 0
+                return
+            # Debounced: one inactive reading can be the tail of the stop.
+            self._wake_polls += 1
+            if self._wake_polls < WAKE_CONFIRM_POLLS:
+                return
+
+        self._restore_saver_settings()
+        self._clear_state_file()
+        self._awaiting_wake = False
+        self._redarken_pending = False
+        self._wake_polls = 0
+        self._saved_saver_mode = None
+        self._saved_saver_audio = None
+        xbmc.log("Kotome: user returned — screensaver settings restored", xbmc.LOGINFO)
+
+    def _reset(self, keep_awaiting=False):
         self.active = False
         self.original_volume = None
         self.last_applied_volume = None
         self.user_overrode_volume = False
         self._screen_action_fired = False
+        if not (keep_awaiting and self._awaiting_wake):
+            self._saved_saver_mode = None
+            self._saved_saver_audio = None
 
-    def _close_overlay(self):
-        if self._overlay is not None:
-            try:
-                self._overlay.close()
-            except Exception:
-                pass
-            self._overlay = None
+    def _restore_saver_settings(self):
+        """Give Kodi's screensaver settings back exactly as we found them."""
+        if self._saved_saver_mode is not None:
+            _set_setting(SETTING_SAVER_MODE, self._saved_saver_mode)
+        if self._saved_saver_audio is not None:
+            _set_setting(SETTING_SAVER_AUDIO, bool(self._saved_saver_audio))
+
+    def _wake_screen(self):
+        if self._screen_action == "screen_off":
+            if xbmc.getCondVisibility("System.DPMSActive"):
+                xbmc.executebuiltin("ToggleDPMS")
+        elif xbmc.getCondVisibility("System.ScreenSaverActive"):
+            # 'noop' deactivates the screensaver and does nothing else. Any
+            # real input wakes it too, but Select lands on whatever has focus
+            # and can answer a dialog nobody knew was open.
+            _jsonrpc("Input.ExecuteAction", {"action": "noop"})
+
+    @staticmethod
+    def _idle_threshold():
+        try:
+            return int(ADDON.getSetting("sleep_idle_seconds"))
+        except (ValueError, TypeError):
+            return 30
 
     def _maybe_fire_screen_action(self):
         if self._screen_action == "none":
             return
-        try:
-            idle_thresh = int(ADDON.getSetting("sleep_idle_seconds"))
-        except (ValueError, TypeError):
-            idle_thresh = 30
+        idle_thresh = self._idle_threshold()
         try:
             idle = xbmc.getGlobalIdleTime()
         except Exception:
@@ -365,30 +623,48 @@ class SleepModeController:
 
         if idle < idle_thresh:
             if self._screen_action_fired:
-                # User interacted — dismiss overlay, allow re-fire
-                self._close_overlay()
+                # The user came back. Re-arm so the action fires again on the
+                # next idle period; the screensaver has already dismissed
+                # itself on their input.
                 self._screen_action_fired = False
             return
 
         if self._screen_action_fired:
             return
 
-        if self._screen_action == "screensaver_black":
-            self._overlay = _ScreenOverlay(dim=False)
-            self._overlay.show()
-            self._screen_action_fired = True
-        elif self._screen_action == "screensaver_dim":
-            self._overlay = _ScreenOverlay(dim=True)
-            self._overlay.show()
-            self._screen_action_fired = True
-        elif self._screen_action == "screen_off_cec":
-            xbmc.executebuiltin("CECStandby")
-            self._screen_action_fired = True
-            xbmc.log("Koshelf: sent CEC standby (idle={})".format(idle), xbmc.LOGINFO)
-        elif self._screen_action == "screen_off_android":
+        if self._screen_action == "screen_off":
             xbmc.executebuiltin("ToggleDPMS")
             self._screen_action_fired = True
-            xbmc.log("Koshelf: toggled DPMS off (idle={})".format(idle), xbmc.LOGINFO)
+            xbmc.log(
+                "Kotome: display off via DPMS (idle={})".format(idle), xbmc.LOGINFO
+            )
+        elif self._screen_action in _SAVER_FOR_ACTION:
+            self._activate_screensaver()
+            self._screen_action_fired = True
+            xbmc.log(
+                "Kotome: screensaver activated (idle={}, mode={})".format(
+                    idle, self._screen_action
+                ),
+                xbmc.LOGINFO,
+            )
+
+    def _activate_screensaver(self):
+        """Fire Kodi's own screensaver, borrowing two settings to do it.
+
+        screensaver.disableforaudio defaults to true, and with it set
+        ActivateScreenSaver is a silent no-op during audio playback — measured
+        on 21.3: System.ScreenSaverActive stayed false with it on and went true
+        with it off, same call either way. An empty screensaver.mode ("None",
+        which real installs use) draws nothing, so a named look is substituted
+        for the duration of the timer.
+        """
+        wanted = _SAVER_FOR_ACTION.get(self._screen_action)
+        if wanted is None:
+            # 'the user's own choice' — but None is not a choice we can show.
+            wanted = self._saved_saver_mode or SAVER_BLACK
+        _set_setting(SETTING_SAVER_MODE, wanted)
+        _set_setting(SETTING_SAVER_AUDIO, False)
+        xbmc.executebuiltin("ActivateScreenSaver")
 
     def _maybe_ramp_volume(self, remaining):
         try:
@@ -408,7 +684,7 @@ class SleepModeController:
             and cur != self.last_applied_volume
         ):
             xbmc.log(
-                "Koshelf: volume ramp backed off (user adjusted from "
+                "Kotome: volume ramp backed off (user adjusted from "
                 "{} to {})".format(self.last_applied_volume, cur),
                 xbmc.LOGINFO,
             )
@@ -421,7 +697,7 @@ class SleepModeController:
         self.last_applied_volume = target
 
 
-class KoshelfMonitor(xbmc.Monitor):
+class KotomeMonitor(xbmc.Monitor):
     """Detects addon settings changes and writes new tempo to the shared file."""
 
     def __init__(self):
@@ -432,8 +708,8 @@ class KoshelfMonitor(xbmc.Monitor):
         self.settings_changed = True
 
 
-def set_koshelf_properties(win, session_data, player, chapters):
-    """Update Koshelf-specific window properties during playback."""
+def set_kotome_properties(win, session_data, player, chapters):
+    """Update Kotome-specific window properties during playback."""
     try:
         current_time = player.getTime()
     except Exception:
@@ -442,28 +718,28 @@ def set_koshelf_properties(win, session_data, player, chapters):
     # Chapter display
     chapter_name = find_chapter(chapters, current_time)
     if chapter_name:
-        win.setProperty("Koshelf.ChapterName", chapter_name)
+        _set_property(win, "ChapterName", chapter_name)
 
     # Now playing info from session
     meta = session_data.get("media_metadata", {})
     if meta.get("title"):
-        win.setProperty("Koshelf.NowPlaying.Title", meta["title"])
+        _set_property(win, "NowPlaying.Title", meta["title"])
     if meta.get("author"):
-        win.setProperty("Koshelf.NowPlaying.Author", meta["author"])
+        _set_property(win, "NowPlaying.Author", meta["author"])
 
 
-def clear_koshelf_properties(win):
+def clear_kotome_properties(win):
     for prop in (
-        "Koshelf.ChapterName",
-        "Koshelf.NowPlaying.Title",
-        "Koshelf.NowPlaying.Author",
-        "Koshelf.SleepTimerRemaining",
+        "Kotome.ChapterName",
+        "Kotome.NowPlaying.Title",
+        "Kotome.NowPlaying.Author",
+        "Kotome.SleepTimerRemaining",
     ):
         win.clearProperty(prop)
 
 
 def run():
-    monitor = KoshelfMonitor()
+    monitor = KotomeMonitor()
     player = xbmc.Player()
     win = xbmcgui.Window(10000)
 
@@ -482,10 +758,16 @@ def run():
     sleep_controller = SleepModeController()
 
     # Seed the shared tempo config so speed.py has min/max/step ready even
-    # if the user triggers keys before opening playback from Koshelf.
+    # if the user triggers keys before opening playback from Kotome.
     write_config()
+    # An addon update restores the zip's <reuselanguageinvoker>true</>, so a
+    # user who turned the setting off needs the file rewritten again. Too
+    # late for this session — ExtraInfo is already loaded — but the next
+    # Kodi start then matches.
+    apply_reuse_invoker(notify=False)
+    last_reuse = ADDON.getSetting("reuse_language_invoker")
 
-    xbmc.log("Koshelf service started", xbmc.LOGINFO)
+    xbmc.log("Kotome service started", xbmc.LOGINFO)
 
     # 0.25s poll keeps the resume-seek latency down once the stream is ready,
     # so the user hears as little of the pre-resume audio as possible.
@@ -493,13 +775,13 @@ def run():
         if monitor.waitForAbort(0.25):
             break
 
-        # When the sentinel appears or disappears, refresh a Koshelf listing
+        # When the sentinel appears or disappears, refresh a Kotome listing
         # if that's what the user is currently looking at — so the root shows
         # the "Now playing" item without needing a manual re-entry.
         active_now = os.path.exists(ACTIVE_FILE)
         if active_now != last_active:
             folder = xbmc.getInfoLabel("Container.FolderPath") or ""
-            if "plugin.audio.koshelf" in folder:
+            if "plugin.audio.kotome" in folder:
                 xbmc.executebuiltin("Container.Refresh")
             last_active = active_now
 
@@ -514,6 +796,10 @@ def run():
             # Speed changes during playback are driven by inputstream.tempo's
             # keyboard/remote shortcuts which write directly to TEMPO_FILE.
             write_config()
+            reuse = ADDON.getSetting("reuse_language_invoker")
+            if reuse != last_reuse:
+                last_reuse = reuse
+                apply_reuse_invoker(notify=True)
 
         if not player.isPlaying():
             if active_session:
@@ -523,16 +809,14 @@ def run():
                 client = None
                 chapters = []
                 clear_session()
-                clear_koshelf_properties(win)
-                try:
-                    if os.path.exists(ACTIVE_FILE):
-                        os.remove(ACTIVE_FILE)
-                except OSError:
-                    pass
+                clear_kotome_properties(win)
+                _release_sentinel()
             sleep_controller.on_playback_stopped(win)
+            sleep_controller.await_wake()
             continue
 
         # Audio is playing — check if we have a session to track
+        sleep_controller.await_wake(playing_again=True)
         session_data = load_session()
         if not session_data:
             continue
@@ -551,10 +835,10 @@ def run():
             chapters = session_data.get("chapters", [])
             last_sync = time.time()
             client = get_client()
-            xbmc.log("Koshelf: tracking session {}".format(session_id), xbmc.LOGINFO)
+            xbmc.log("Kotome: tracking session {}".format(session_id), xbmc.LOGINFO)
 
-        # Update Koshelf window properties (chapter, now playing)
-        set_koshelf_properties(win, active_session, player, chapters)
+        # Update Kotome window properties (chapter, now playing)
+        set_kotome_properties(win, active_session, player, chapters)
 
         # Sleep timer + screensaver swap + volume ramp-down
         sleep_controller.tick(player, win)
@@ -590,11 +874,11 @@ def run():
                 active_session["last_time"] = current_time
                 client.sync_session(session_id, current_time, duration, listened)
                 xbmc.log(
-                    "Koshelf: synced {:.0f}s/{:.0f}s".format(current_time, duration),
+                    "Kotome: synced {:.0f}s/{:.0f}s".format(current_time, duration),
                     xbmc.LOGINFO,
                 )
             except Exception as e:
-                xbmc.log("Koshelf: sync error: {}".format(e), xbmc.LOGWARNING)
+                xbmc.log("Kotome: sync error: {}".format(e), xbmc.LOGWARNING)
 
     # Kodi is shutting down — close any active session and restore any
     # in-flight sleep-mode state so the user's screensaver/volume aren't
@@ -603,9 +887,10 @@ def run():
         _close_active_session(client, active_session, "session on shutdown")
         clear_session()
     sleep_controller.on_playback_stopped(win)
-    clear_koshelf_properties(win)
+    sleep_controller.await_wake(playing_again=True)
+    clear_kotome_properties(win)
 
-    xbmc.log("Koshelf service stopped", xbmc.LOGINFO)
+    xbmc.log("Kotome service stopped", xbmc.LOGINFO)
 
 
 if __name__ == "__main__":

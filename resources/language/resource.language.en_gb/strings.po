@@ -1,8 +1,8 @@
-# Koshelf — English (en_GB) language strings.
+# Kotome — English (en_GB) language strings.
 msgid ""
 msgstr ""
-"Project-Id-Version: Koshelf\n"
-"Report-Msgid-Bugs-To: https://github.com/kontell/koshelf/issues\n"
+"Project-Id-Version: Kotome\n"
+"Report-Msgid-Bugs-To: https://github.com/kontell/kotome/issues\n"
 "POT-Creation-Date: 2026-04-15\n"
 "Language: en_gb\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -16,12 +16,8 @@ msgctxt "#30001"
 msgid "Speed limits, step increments, resume and per-book preferences."
 msgstr ""
 
-msgctxt "#30100"
-msgid "General"
-msgstr ""
-
 msgctxt "#30101"
-msgid "Server connection details and progress sync."
+msgid "Server connection details."
 msgstr ""
 
 # Speed step
@@ -123,40 +119,103 @@ msgid "Server URL"
 msgstr ""
 
 msgctxt "#30111"
-msgid "Full URL of your AudioBookShelf server, including protocol and port (e.g. https://books.example.com)."
+msgid "Your AudioBookShelf server. A bare host name gets http and port 13378; a full URL is used as given (e.g. https://books.example.com)."
 msgstr ""
 
-msgctxt "#30130"
-msgid "Username"
+msgctxt "#30120"
+msgid "Account"
 msgstr ""
 
-msgctxt "#30131"
-msgid "Your AudioBookShelf account name. Koshelf logs in and caches a session token."
+msgctxt "#30170"
+msgid "Sign in"
 msgstr ""
 
-msgctxt "#30140"
-msgid "Password"
+msgctxt "#30171"
+msgid "Ask the server who it is, then sign in. Your password is exchanged for a token and is not stored."
 msgstr ""
 
-msgctxt "#30141"
-msgid "Your AudioBookShelf account password."
+msgctxt "#30172"
+msgid "Server"
 msgstr ""
 
-# Player choice
-msgctxt "#30160"
-msgid "Player"
+msgctxt "#30173"
+msgid "The server you are signed in to."
 msgstr ""
 
-msgctxt "#30161"
-msgid "Which Kodi player core handles playback. Video player shows cover-art and visualisation fanart in the now-playing window and reports chapter info to the OSD when present in the source. Music player uses the lighter PAPlayer pipeline."
+msgctxt "#30174"
+msgid "Signed in as"
 msgstr ""
 
-msgctxt "#30162"
-msgid "Video player"
+msgctxt "#30175"
+msgid "The AudioBookShelf account these tokens belong to."
 msgstr ""
 
-msgctxt "#30163"
-msgid "Music player"
+msgctxt "#30176"
+msgid "Test connection"
+msgstr ""
+
+msgctxt "#30177"
+msgid "Check the server is reachable and list the libraries this account can see."
+msgstr ""
+
+msgctxt "#30178"
+msgid "Sign out"
+msgstr ""
+
+msgctxt "#30179"
+msgid "Forget the saved tokens on this device and end the session on the server."
+msgstr ""
+
+msgctxt "#30180"
+msgid "Connection"
+msgstr ""
+
+msgctxt "#30183"
+msgid "Verify HTTPS certificate"
+msgstr ""
+
+msgctxt "#30184"
+msgid "Turn this off only for a server using a self-signed certificate. It disables the check that you are talking to the server you think you are."
+msgstr ""
+
+# 30185-30189 — LAN server discovery (abs_discovery.py). #30189 names
+# manual entry rather than suggesting another go: a host that is up
+# answers the SYN in milliseconds, and the usual causes — another
+# subnet, ABS bound to localhost, a reverse-proxied hostname — no
+# number of retries reaches. Quotes #30110 verbatim.
+msgctxt "#30185"
+msgid "Find servers on local network"
+msgstr ""
+
+msgctxt "#30186"
+msgid "Looks for AudioBookShelf servers on this network and lists the ones that answer. The one you choose is filled into \"Server URL\"."
+msgstr ""
+
+msgctxt "#30187"
+msgid "Searching for AudioBookShelf servers…"
+msgstr ""
+
+msgctxt "#30188"
+msgid "Select a server"
+msgstr ""
+
+msgctxt "#30189"
+msgid "No AudioBookShelf servers answered — enter the address manually"
+msgstr ""
+
+# 30190-30192 — Advanced-tab toggle that rewrites addon.xml's
+# <reuselanguageinvoker>. #30192 is the toast after a change; Kodi only
+# rereads ExtraInfo on the next start.
+msgctxt "#30190"
+msgid "Reuse language invoker"
+msgstr ""
+
+msgctxt "#30191"
+msgid "Disable if using multiple plugin:// paths in skin widgets. Requires Kodi restart."
+msgstr ""
+
+msgctxt "#30192"
+msgid "Restart Kodi to apply this"
 msgstr ""
 
 # Sleep timer category
@@ -174,11 +233,11 @@ msgid "Screen action"
 msgstr ""
 
 msgctxt "#30211"
-msgid "What to do with the screen while the sleep timer is active. Screensaver options swap Kodi's screensaver after an idle period. Screen-off options power down the display directly."
+msgid "What to do with the screen once you stop touching the remote. The screensaver options use Kodi's own screensaver, and put your screensaver settings back when the timer ends. Turning the display off needs DPMS, which only exists on Linux/X11 — elsewhere the screensaver is used instead."
 msgstr ""
 
 msgctxt "#30212"
-msgid "None"
+msgid "Nothing"
 msgstr ""
 
 msgctxt "#30213"
@@ -189,12 +248,12 @@ msgctxt "#30214"
 msgid "Screensaver: Dim"
 msgstr ""
 
-msgctxt "#30215"
-msgid "Screen off (HDMI-CEC)"
+msgctxt "#30216"
+msgid "Turn the display off (Linux/X11 only)"
 msgstr ""
 
-msgctxt "#30216"
-msgid "Screen off (Android / Google TV)"
+msgctxt "#30217"
+msgid "Screensaver: my usual one"
 msgstr ""
 
 # Idle seconds
@@ -203,7 +262,7 @@ msgid "Idle seconds before screen action"
 msgstr ""
 
 msgctxt "#30221"
-msgid "How many seconds without input before the screen action fires."
+msgid "How many seconds without input before the screen action fires. It fires once per idle period and re-arms when you next touch the remote."
 msgstr ""
 
 # Volume ramp-down
@@ -254,5 +313,14 @@ msgstr ""
 
 msgctxt "#30269"
 msgid "Sleep timer minutes"
+msgstr ""
+
+# Advanced category
+msgctxt "#30300"
+msgid "Advanced"
+msgstr ""
+
+msgctxt "#30301"
+msgid "Certificate checks, progress sync, page size, and the language invoker."
 msgstr ""
 

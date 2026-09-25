@@ -1,19 +1,148 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <settings version="1">
-  <section id="plugin.audio.koshelf">
+  <section id="plugin.audio.kotome">
+    <category id="general" label="30120" help="30101">
+      <group id="1">
+        <setting id="server_url" type="string" label="30110" help="30111">
+          <level>0</level>
+          <default></default>
+          <constraints>
+            <allowempty>true</allowempty>
+          </constraints>
+          <!-- Editing this while signed in would point the stored tokens at a
+               server that never issued them. Sign out to change it. -->
+          <dependencies>
+            <dependency type="enable">
+              <condition setting="logged_in" operator="is">false</condition>
+            </dependency>
+          </dependencies>
+          <control type="edit" format="string"/>
+        </setting>
+        <!-- close=true is load-bearing here, not house style. Kodi runs
+             SaveAndClose before the builtin, so the route writes
+             server_url with the dialog already shut; written into an open
+             dialog it is reverted when the user backs out. The route
+             reopens settings afterwards so the filled field is the
+             confirmation. -->
+        <setting id="find_servers" type="string" label="30185" help="30186">
+          <level>0</level>
+          <default></default>
+          <constraints><allowempty>true</allowempty></constraints>
+          <dependencies>
+            <dependency type="visible">
+              <condition setting="logged_in" operator="is">false</condition>
+            </dependency>
+          </dependencies>
+          <control type="button" format="action">
+            <data>RunPlugin(plugin://plugin.audio.kotome/?action=find_servers)</data>
+            <close>true</close>
+          </control>
+        </setting>
+        <!-- format="action" buttons are the only way an add-on setting can
+             run code. close=true so the modal opens over the skin rather
+             than over this dialog. -->
+        <setting id="login_button" type="string" label="30170" help="30171">
+          <level>0</level>
+          <default></default>
+          <constraints><allowempty>true</allowempty></constraints>
+          <dependencies>
+            <dependency type="visible">
+              <condition setting="logged_in" operator="is">false</condition>
+            </dependency>
+          </dependencies>
+          <control type="button" format="action">
+            <data>RunPlugin(plugin://plugin.audio.kotome/?action=login)</data>
+            <close>true</close>
+          </control>
+        </setting>
+        <setting id="server_name" type="string" label="30172" help="30173">
+          <level>0</level>
+          <default></default>
+          <constraints><allowempty>true</allowempty></constraints>
+          <enable>false</enable>
+          <dependencies>
+            <dependency type="visible">
+              <condition setting="logged_in" operator="is">true</condition>
+            </dependency>
+          </dependencies>
+          <control type="edit" format="string"/>
+        </setting>
+        <setting id="user_name" type="string" label="30174" help="30175">
+          <level>0</level>
+          <default></default>
+          <constraints><allowempty>true</allowempty></constraints>
+          <enable>false</enable>
+          <dependencies>
+            <dependency type="visible">
+              <condition setting="logged_in" operator="is">true</condition>
+            </dependency>
+          </dependencies>
+          <control type="edit" format="string"/>
+        </setting>
+        <setting id="test_connection" type="string" label="30176" help="30177">
+          <level>0</level>
+          <default></default>
+          <constraints><allowempty>true</allowempty></constraints>
+          <dependencies>
+            <dependency type="visible">
+              <condition setting="logged_in" operator="is">true</condition>
+            </dependency>
+          </dependencies>
+          <control type="button" format="action">
+            <data>RunPlugin(plugin://plugin.audio.kotome/?action=test_connection)</data>
+            <close>true</close>
+          </control>
+        </setting>
+        <setting id="logout_button" type="string" label="30178" help="30179">
+          <level>0</level>
+          <default></default>
+          <constraints><allowempty>true</allowempty></constraints>
+          <dependencies>
+            <dependency type="visible">
+              <condition setting="logged_in" operator="is">true</condition>
+            </dependency>
+          </dependencies>
+          <control type="button" format="action">
+            <data>RunPlugin(plugin://plugin.audio.kotome/?action=logout)</data>
+            <close>true</close>
+          </control>
+        </setting>
+      </group>
+      <!-- Stored, never shown. A <dependency> can read a setting and cannot
+           read a file, which is why the account lives here and not in JSON. -->
+      <group id="3">
+        <setting id="logged_in" type="boolean">
+          <level>0</level><default>false</default><visible>false</visible>
+          <control type="toggle"/>
+        </setting>
+        <setting id="access_token" type="string">
+          <level>0</level><default></default><visible>false</visible>
+          <constraints><allowempty>true</allowempty></constraints>
+          <control type="edit" format="string"/>
+        </setting>
+        <setting id="refresh_token" type="string">
+          <level>0</level><default></default><visible>false</visible>
+          <constraints><allowempty>true</allowempty></constraints>
+          <control type="edit" format="string"/>
+        </setting>
+        <setting id="token_expires_at" type="string">
+          <level>0</level><default>0</default><visible>false</visible>
+          <constraints><allowempty>true</allowempty></constraints>
+          <control type="edit" format="string"/>
+        </setting>
+        <setting id="hide_watched" type="boolean">
+          <level>0</level><default>false</default><visible>false</visible>
+          <control type="toggle"/>
+        </setting>
+        <setting id="device_id" type="string">
+          <level>0</level><default></default><visible>false</visible>
+          <constraints><allowempty>true</allowempty></constraints>
+          <control type="edit" format="string"/>
+        </setting>
+      </group>
+    </category>
     <category id="playback" label="30000" help="30001">
       <group id="1">
-        <setting id="player" type="integer" label="30160" help="30161">
-          <level>0</level>
-          <default>0</default>
-          <constraints>
-            <options>
-              <option label="30162">0</option>
-              <option label="30163">1</option>
-            </options>
-          </constraints>
-          <control type="spinner" format="string"/>
-        </setting>
         <setting id="speed_step" type="string" label="30010" help="30011">
           <level>0</level>
           <default>0.10</default>
@@ -93,8 +222,8 @@
               <option label="30212">none</option>
               <option label="30213">screensaver_black</option>
               <option label="30214">screensaver_dim</option>
-              <option label="30215">screen_off_cec</option>
-              <option label="30216">screen_off_android</option>
+              <option label="30217">screensaver_user</option>
+              <option label="30216">screen_off</option>
             </options>
           </constraints>
           <control type="spinner" format="string"/>
@@ -112,7 +241,7 @@
           </control>
           <dependencies>
             <dependency type="visible">
-              <condition setting="sleep_screen_action" operator="isnot">none</condition>
+              <condition setting="sleep_screen_action" operator="!is">none</condition>
             </dependency>
           </dependencies>
         </setting>
@@ -136,33 +265,12 @@
         </setting>
       </group>
     </category>
-    <category id="general" label="30100" help="30101">
+    <category id="advanced" label="30300" help="30301">
       <group id="1">
-        <setting id="server_url" type="string" label="30110" help="30111">
-          <level>0</level>
-          <default>http://localhost:13378</default>
-          <constraints>
-            <allowempty>true</allowempty>
-          </constraints>
-          <control type="edit" format="string"/>
-        </setting>
-        <setting id="username" type="string" label="30130" help="30131">
-          <level>0</level>
-          <default></default>
-          <constraints>
-            <allowempty>true</allowempty>
-          </constraints>
-          <control type="edit" format="string"/>
-        </setting>
-        <setting id="password" type="string" label="30140" help="30141">
-          <level>0</level>
-          <default></default>
-          <constraints>
-            <allowempty>true</allowempty>
-          </constraints>
-          <control type="edit" format="string">
-            <hidden>true</hidden>
-          </control>
+        <setting id="ssl_verify" type="boolean" label="30183" help="30184">
+          <level>1</level>
+          <default>true</default>
+          <control type="toggle"/>
         </setting>
         <setting id="sync_interval" type="integer" label="30070" help="30071">
           <level>0</level>
@@ -185,6 +293,18 @@
             <maximum>500</maximum>
           </constraints>
           <control type="slider" format="integer"/>
+        </setting>
+        <!-- Rewrites addon.xml's <reuselanguageinvoker>. Kodi reads that
+             element at addon load, so a change needs a Kodi restart. The
+             zip always ships true; the service reconciles a false setting
+             after an update overwrites the file. Disable when several
+             skin widgets load plugin:// paths at once — Kodi has one
+             reusable invoker thread, and overlapping GetDirectory calls
+             on it hang or crash. -->
+        <setting id="reuse_language_invoker" type="boolean" label="30190" help="30191">
+          <level>0</level>
+          <default>true</default>
+          <control type="toggle"/>
         </setting>
       </group>
     </category>

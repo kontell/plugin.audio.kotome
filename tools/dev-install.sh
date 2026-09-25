@@ -7,7 +7,7 @@
 set -euo pipefail
 
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
-DEST="$HOME/.kodi/addons/plugin.audio.koshelf"
+DEST="$HOME/.kodi/addons/plugin.audio.kotome"
 KODI_RPC="http://localhost:8080/jsonrpc"
 
 # --delete-excluded as well as --delete: plain --exclude *protects* an existing
@@ -37,8 +37,8 @@ sleep 2
 # old code running. Disable first, then enable.
 for state in false true; do
     curl -s -u kodi:kodi -X POST -H 'Content-Type: application/json' \
-        -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"Addons.SetAddonEnabled\",\"params\":{\"addonid\":\"plugin.audio.koshelf\",\"enabled\":$state}}" \
+        -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"Addons.SetAddonEnabled\",\"params\":{\"addonid\":\"plugin.audio.kotome\",\"enabled\":$state}}" \
         "$KODI_RPC" > /dev/null
     sleep 2
 done
-echo "installed and enabled plugin.audio.koshelf"
+echo "installed and enabled plugin.audio.kotome"

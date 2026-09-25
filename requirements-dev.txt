@@ -6,3 +6,8 @@ Kodistubs==21.*
 # .git-blame-ignore-revs.
 black==26.5.1
 tox
+
+# tools/make-icons.py and tools/make-fanart.py only. Not pinned: neither is
+# in a CI gate, both are run by hand when an asset changes, and both write
+# their output into the tree where it is reviewed before it ships.
+Pillow
