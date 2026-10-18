@@ -3,6 +3,7 @@
 import json
 import os
 import time
+from urllib.parse import urlencode
 
 import xbmc
 import xbmcaddon
@@ -11,6 +12,7 @@ import xbmcvfs
 
 import abs_auth
 import addonxml
+import playback
 from abs_api import ABSClient
 
 ADDON = xbmcaddon.Addon()
@@ -19,51 +21,6 @@ SESSION_FILE = os.path.join(PROFILE_DIR, "session.json")
 SPEEDS_FILE = os.path.join(PROFILE_DIR, "speeds.json")
 SLEEP_FILE = os.path.join(PROFILE_DIR, "sleep_timer")
 SLEEP_STATE_FILE = os.path.join(PROFILE_DIR, "sleep_state.json")
-# Our own rate and config files, named in the sentinel so inputstream.tempo's
-# keymap acts on ours and not on another add-on's. A patched YouTube drives
-# the same add-on; on the shared paths an audiobook at 2.0x and a video at
-# 1.5x overwrote each other's rate.
-OWNER = "plugin.audio.kotome"
-TEMPO_FILE = xbmcvfs.translatePath("special://temp/inputstream_tempo." + OWNER)
-CONFIG_FILE = xbmcvfs.translatePath("special://temp/inputstream_tempo_config." + OWNER)
-# The sentinel stays shared: it is the single "the keys are live" flag.
-ACTIVE_FILE = xbmcvfs.translatePath("special://temp/inputstream_tempo_active")
-
-
-def _sentinel_owner():
-    """The add-on named in the sentinel, or None if it is not in keyed form."""
-    try:
-        with open(ACTIVE_FILE) as f:
-            content = f.read()
-    except (IOError, OSError):
-        return None
-    for line in content.splitlines():
-        key, sep, value = line.partition("=")
-        if sep and key.strip() == "addon":
-            return value.strip()
-    return None
-
-
-def _release_sentinel():
-    """Give the tempo speed keys back, if we were the ones holding them.
-
-    Kodi's player state is global, so this stop path also runs when something
-    else was playing — removing the sentinel unconditionally took the keys
-    away from whichever add-on had armed them.
-    """
-    if _sentinel_owner() != OWNER:
-        return
-    try:
-        os.remove(ACTIVE_FILE)
-    except OSError:
-        pass
-
-
-def _get_float(setting_id, default):
-    try:
-        return float(ADDON.getSetting(setting_id))
-    except (ValueError, TypeError):
-        return default
 
 
 def _addon_xml_path():
@@ -92,20 +49,6 @@ def apply_reuse_invoker(notify=False):
     return bool(wrote)
 
 
-def write_config():
-    """Write {step, min, max} as JSON for speed.py to consume."""
-    step = _get_float("speed_step", 0.10)
-    lo = _get_float("min_speed", 1.0)
-    hi = _get_float("max_speed", 3.0)
-    if lo > hi:
-        lo, hi = 0.5, 5.0
-    try:
-        with open(CONFIG_FILE, "w") as f:
-            json.dump({"step": step, "min": lo, "max": hi}, f)
-    except IOError:
-        pass
-
-
 def load_session():
     try:
         if os.path.exists(SESSION_FILE):
@@ -122,14 +65,6 @@ def clear_session():
             os.remove(SESSION_FILE)
     except Exception:
         pass
-
-
-def read_tempo():
-    try:
-        with open(TEMPO_FILE) as f:
-            return float(f.read().strip())
-    except Exception:
-        return 1.0
 
 
 def save_book_speed(item_id, speed):
@@ -159,14 +94,6 @@ def get_client():
     return ABSClient.from_credentials(
         creds, verify=ADDON.getSetting("ssl_verify") != "false"
     )
-
-
-def find_chapter(chapters, current_time):
-    """Find the current chapter name given playback position in seconds."""
-    for ch in chapters:
-        if ch.get("start", 0) <= current_time < ch.get("end", 0):
-            return ch.get("title", "")
-    return ""
 
 
 def _close_active_session(client, session, label="session"):
@@ -254,12 +181,13 @@ def _set_setting(setting_id, value):
 
 
 # Window properties are a public interface: a skin can be keyed on them, and
-# renaming one breaks it with no warning and no error. Both names are written
-# for the whole 1.x line; the Koshelf.* aliases go in 2.0.
-_PROPERTY_PREFIXES = ("Kotome", "Koshelf")
-
+# renaming one breaks it with no warning and no error.
 _PROPERTY_NAMES = (
+    "Chapter",
+    "ChapterCount",
     "ChapterName",
+    "Book.Time",
+    "Book.Remaining",
     "NowPlaying.Title",
     "NowPlaying.Author",
     "SleepTimerRemaining",
@@ -267,13 +195,11 @@ _PROPERTY_NAMES = (
 
 
 def _set_property(win, name, value):
-    for prefix in _PROPERTY_PREFIXES:
-        win.setProperty("{}.{}".format(prefix, name), value)
+    win.setProperty("Kotome." + name, value)
 
 
 def _clear_property(win, name):
-    for prefix in _PROPERTY_PREFIXES:
-        win.clearProperty("{}.{}".format(prefix, name))
+    win.clearProperty("Kotome." + name)
 
 
 class SleepModeController:
@@ -698,7 +624,7 @@ class SleepModeController:
 
 
 class KotomeMonitor(xbmc.Monitor):
-    """Detects addon settings changes and writes new tempo to the shared file."""
+    """Notices add-on settings changes."""
 
     def __init__(self):
         super().__init__()
@@ -708,19 +634,150 @@ class KotomeMonitor(xbmc.Monitor):
         self.settings_changed = True
 
 
-def set_kotome_properties(win, session_data, player, chapters):
-    """Update Kotome-specific window properties during playback."""
+class KotomePlayer(xbmc.Player):
+    """Player events the loop acts on, recorded here and handled there.
+
+    The callbacks arrive on Kodi's callback thread; the loop owns the state.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.starting = False
+        self.av_started = False
+        self.ended = False
+        self.stopped = False
+
+    def onPlayBackStarted(self):
+        # A file opened. PAPlayer has reset the tempo to 1.0 for it, unless it
+        # was queued behind the last one, so the tempo read until AV starts is
+        # not the listener's.
+        self.starting = True
+        self.ended = False
+        self.stopped = False
+
+    def onAVStarted(self):
+        self.av_started = True
+
+    def onPlayBackEnded(self):
+        self.ended = True
+
+    def onPlayBackStopped(self):
+        self.stopped = True
+
+    def onPlayBackError(self):
+        self.stopped = True
+
+
+def _player_id():
+    players = _jsonrpc("Player.GetActivePlayers") or []
+    return players[0]["playerid"] if players else None
+
+
+def _tempo(player_id):
+    result = _jsonrpc(
+        "Player.GetProperties", {"playerid": player_id, "properties": ["tempo"]}
+    )
+    return result.get("tempo")
+
+
+class TempoKeeper:
+    """Keeps the book at its speed in Kodi's own tempo (kontell/xbmc#15).
+
+    The book's speed is applied when its first file starts, and again whenever
+    a file is opened rather than queued, since PAPlayer starts an opened file
+    at 1.0. A change the listener makes, from the OSD or the keys, becomes the
+    book's speed and is kept for it.
+    """
+
+    def __init__(self):
+        self.wanted = None
+        self.item_id = None
+        self.last_saved = None
+        self.seen = None
+
+    def start(self, session_data):
+        self.wanted = float(session_data.get("tempo") or 1.0)
+        self.item_id = session_data.get("item_id")
+        self.last_saved = self.wanted
+        self.seen = None
+
+    def apply(self):
+        player_id = _player_id()
+        if player_id is None or self.wanted is None:
+            return
+        current = _tempo(player_id)
+        if current is not None and abs(current - self.wanted) > 0.001:
+            _jsonrpc("Player.SetTempo", {"playerid": player_id, "tempo": self.wanted})
+            xbmc.log("Kotome: tempo {:.2f}".format(self.wanted), xbmc.LOGINFO)
+
+    def follow(self):
+        """Adopt a tempo the listener chose, and keep it for the book."""
+        player_id = _player_id()
+        if player_id is None:
+            return
+        current = _tempo(player_id)
+        if current is None or self.wanted is None:
+            return
+        if abs(current - self.wanted) <= 0.001:
+            self.seen = None
+        elif self.seen is None or abs(current - self.seen) > 0.001:
+            # Read twice before it is believed: as a file ends, the player
+            # reports 1.0 for a moment before it stops.
+            self.seen = current
+            return
+        else:
+            self.wanted = round(current, 2)
+            self.seen = None
+        if (
+            self.item_id
+            and ADDON.getSetting("per_book_speed") != "false"
+            and self.wanted != self.last_saved
+        ):
+            save_book_speed(self.item_id, self.wanted)
+            self.last_saved = self.wanted
+
+
+def playing_position(session_data, player):
+    """(position of the file playing in the book's tracks, time in that file).
+
+    (None, None) when what is playing is not one of this session's files.
+    """
     try:
-        current_time = player.getTime()
-    except Exception:
-        current_time = 0
+        playing = player.getPlayingFile()
+        current = player.getTime()
+    except RuntimeError:
+        return None, None
+    session_id, index = playback.parse_track_url(playing)
+    if session_id != session_data.get("session_id"):
+        return None, None
+    return playback.track_by_index(session_data.get("tracks") or [], index), current
 
-    # Chapter display
-    chapter_name = find_chapter(chapters, current_time)
-    if chapter_name:
-        _set_property(win, "ChapterName", chapter_name)
 
-    # Now playing info from session
+def set_kotome_properties(win, session_data, book_time, tempo):
+    """Window properties for the book playing, in book time."""
+    # Where the server has no chapter for this point of the book (one library
+    # item holding several books, say), none are published, and a skin falls
+    # back to Player.Chapter*: the file's own chapters.
+    position, chapter = playback.chapter_at(
+        session_data.get("chapters") or [], book_time
+    )
+    if chapter is not None:
+        _set_property(win, "ChapterCount", str(len(session_data["chapters"])))
+        _set_property(win, "Chapter", str(position))
+        _set_property(win, "ChapterName", chapter.get("title", ""))
+    else:
+        for name in ("ChapterCount", "Chapter", "ChapterName"):
+            _clear_property(win, name)
+
+    duration = float(session_data.get("duration") or 0)
+    _set_property(win, "Book.Time", playback.clock(book_time))
+    if duration > 0:
+        _set_property(
+            win,
+            "Book.Remaining",
+            playback.clock((duration - book_time) / (tempo or 1.0)),
+        )
+
     meta = session_data.get("media_metadata", {})
     if meta.get("title"):
         _set_property(win, "NowPlaying.Title", meta["title"])
@@ -729,18 +786,40 @@ def set_kotome_properties(win, session_data, player, chapters):
 
 
 def clear_kotome_properties(win):
-    for prop in (
-        "Kotome.ChapterName",
-        "Kotome.NowPlaying.Title",
-        "Kotome.NowPlaying.Author",
-        "Kotome.SleepTimerRemaining",
-    ):
-        win.clearProperty(prop)
+    for name in _PROPERTY_NAMES:
+        _clear_property(win, name)
+
+
+def play_next_file(session_data, position):
+    """Start the file after `position` of a book Kodi is not queueing.
+
+    A book started outside a playlist (a favourite, PlayMedia) has nothing
+    queued behind its first file. Returns whether there was a next file.
+    """
+    tracks = session_data.get("tracks") or []
+    if position is None or position + 1 >= len(tracks):
+        return False
+    args = {
+        "action": "play_track",
+        "item_id": session_data.get("item_id"),
+        "session_id": session_data.get("session_id"),
+        "index": tracks[position + 1]["index"],
+    }
+    if session_data.get("episode_id"):
+        args["episode_id"] = session_data["episode_id"]
+    xbmc.executebuiltin(
+        "PlayMedia(plugin://{}/?{})".format(ADDON.getAddonInfo("id"), urlencode(args))
+    )
+    xbmc.log(
+        "Kotome: playing file {} of {}".format(position + 2, len(tracks)),
+        xbmc.LOGINFO,
+    )
+    return True
 
 
 def run():
     monitor = KotomeMonitor()
-    player = xbmc.Player()
+    player = KotomePlayer()
     win = xbmcgui.Window(10000)
 
     sync_interval = 30
@@ -752,14 +831,17 @@ def run():
     active_session = None
     last_sync = 0
     client = None
-    chapters = []
-    last_book_speed_save = 0
-    last_active = False
+    tempo = TempoKeeper()
+    last_tempo_check = 0
+    last_now_playing = False
+    # Until this wall-clock time a pause in playback is a file changing, not
+    # the end of the book.
+    hold_until = 0
+    last_heard = 0
+    # When playback was first seen stopped, for the callback saying why.
+    stop_seen = 0
     sleep_controller = SleepModeController()
 
-    # Seed the shared tempo config so speed.py has min/max/step ready even
-    # if the user triggers keys before opening playback from Kotome.
-    write_config()
     # An addon update restores the zip's <reuselanguageinvoker>true</>, so a
     # user who turned the setting off needs the file rewritten again. Too
     # late for this session — ExtraInfo is already loaded — but the next
@@ -769,53 +851,70 @@ def run():
 
     xbmc.log("Kotome service started", xbmc.LOGINFO)
 
-    # 0.25s poll keeps the resume-seek latency down once the stream is ready,
-    # so the user hears as little of the pre-resume audio as possible.
     while not monitor.abortRequested():
         if monitor.waitForAbort(0.25):
             break
 
-        # When the sentinel appears or disappears, refresh a Kotome listing
-        # if that's what the user is currently looking at — so the root shows
-        # the "Now playing" item without needing a manual re-entry.
-        active_now = os.path.exists(ACTIVE_FILE)
-        if active_now != last_active:
+        # When our book starts or stops, refresh a Kotome listing if that's
+        # what the user is looking at, so the root shows or drops "Now playing".
+        now_playing = bool(win.getProperty("Kotome.NowPlaying.Title"))
+        if now_playing != last_now_playing:
             folder = xbmc.getInfoLabel("Container.FolderPath") or ""
             if "plugin.audio.kotome" in folder:
                 xbmc.executebuiltin("Container.Refresh")
-            last_active = active_now
+            last_now_playing = now_playing
 
-        # Handle settings change — refresh sync interval and tempo config.
         if monitor.settings_changed:
             monitor.settings_changed = False
             try:
                 sync_interval = int(ADDON.getSetting("sync_interval"))
             except (ValueError, TypeError):
                 pass
-            # Refresh shared tempo config so speed.py sees new step/min/max.
-            # Speed changes during playback are driven by inputstream.tempo's
-            # keyboard/remote shortcuts which write directly to TEMPO_FILE.
-            write_config()
             reuse = ADDON.getSetting("reuse_language_invoker")
             if reuse != last_reuse:
                 last_reuse = reuse
                 apply_reuse_invoker(notify=True)
 
+        now = time.time()
         if not player.isPlaying():
+            if active_session and not (player.ended or player.stopped):
+                # The callback that says whether the file ended or was stopped
+                # can arrive after isPlaying() turns false.
+                stop_seen = stop_seen or now
+                if now - stop_seen < 2:
+                    continue
+            stop_seen = 0
             if active_session:
+                session_file = load_session() or {}
+                same = session_file.get("session_id") == active_session.get(
+                    "session_id"
+                )
+                # main.py played the book again from another file and the new
+                # file has not been heard yet. Bounded, in case it never is.
+                switched_at = session_file.get("switched_at", 0)
+                switching = last_heard < switched_at and now - switched_at < 15
+                if same and (now < hold_until or switching):
+                    continue
+                if (
+                    player.ended
+                    and not session_file.get("queued")
+                    and play_next_file(active_session, active_session.get("position"))
+                ):
+                    player.ended = False
+                    hold_until = now + 15
+                    continue
                 # Playback stopped — close the session
                 _close_active_session(client, active_session, "session")
                 active_session = None
                 client = None
-                chapters = []
                 clear_session()
                 clear_kotome_properties(win)
-                _release_sentinel()
             sleep_controller.on_playback_stopped(win)
             sleep_controller.await_wake()
             continue
 
         # Audio is playing — check if we have a session to track
+        stop_seen = 0
         sleep_controller.await_wake(playing_again=True)
         session_data = load_session()
         if not session_data:
@@ -832,28 +931,41 @@ def run():
                 _close_active_session(client, active_session, "previous session")
 
             active_session = session_data
-            chapters = session_data.get("chapters", [])
-            last_sync = time.time()
+            last_sync = now
             client = get_client()
+            tempo.start(session_data)
             xbmc.log("Kotome: tracking session {}".format(session_id), xbmc.LOGINFO)
+        else:
+            # main.py rewrites it when the book is played again from another
+            # file, in the same session
+            active_session["queued"] = session_data.get("queued")
 
-        # Update Kotome window properties (chapter, now playing)
-        set_kotome_properties(win, active_session, player, chapters)
+        position, file_time = playing_position(active_session, player)
+        if position is None:
+            # Something else is playing, or our file has not opened yet.
+            continue
+        active_session["position"] = position
+        last_heard = now
+        hold_until = 0
+        book_time = active_session["tracks"][position]["start"] + file_time
+        # What closing the session syncs, so a stop keeps the last second
+        # heard rather than the last periodic sync. Not before the player has
+        # reached the resume position.
+        if not (book_time < 5 and active_session.get("start_time", 0) > 30):
+            active_session["last_time"] = book_time
+
+        if player.av_started:
+            player.av_started = False
+            player.starting = False
+            tempo.apply()
+        elif not player.starting and now - last_tempo_check > 1:
+            last_tempo_check = now
+            tempo.follow()
+
+        set_kotome_properties(win, active_session, book_time, tempo.wanted)
 
         # Sleep timer + screensaver swap + volume ramp-down
         sleep_controller.tick(player, win)
-
-        # Save per-book speed periodically (every 10s, if changed)
-        now = time.time()
-        if (
-            ADDON.getSetting("per_book_speed") != "false"
-            and now - last_book_speed_save > 10
-        ):
-            last_book_speed_save = now
-            item_id = active_session.get("item_id")
-            if item_id:
-                current_tempo = read_tempo()
-                save_book_speed(item_id, current_tempo)
 
         # Periodic sync
         if now - last_sync < sync_interval:
@@ -861,20 +973,17 @@ def run():
 
         if client:
             try:
-                current_time = player.getTime()
                 duration = active_session.get("duration", 0)
                 start_time = active_session.get("start_time", 0)
-                # Guard: don't overwrite a valid resume position with 0.
-                # Can happen if GetTime() hasn't caught up after an initial
-                # seek (e.g. m_currentPts not yet set in the inputstream).
-                if current_time < 5 and start_time > 30:
+                # Guard: don't overwrite a valid resume position with 0 while
+                # the player has not reached it yet.
+                if book_time < 5 and start_time > 30:
                     continue
                 listened = now - last_sync
                 last_sync = now
-                active_session["last_time"] = current_time
-                client.sync_session(session_id, current_time, duration, listened)
+                client.sync_session(session_id, book_time, duration, listened)
                 xbmc.log(
-                    "Kotome: synced {:.0f}s/{:.0f}s".format(current_time, duration),
+                    "Kotome: synced {:.0f}s/{:.0f}s".format(book_time, duration),
                     xbmc.LOGINFO,
                 )
             except Exception as e:

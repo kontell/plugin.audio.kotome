@@ -13,38 +13,11 @@ msgid "Playback"
 msgstr ""
 
 msgctxt "#30001"
-msgid "Speed limits, step increments, resume and per-book preferences."
+msgid "Playback speed, and whether each book keeps its own."
 msgstr ""
 
 msgctxt "#30101"
 msgid "Server connection details."
-msgstr ""
-
-# Speed step
-msgctxt "#30010"
-msgid "Speed step"
-msgstr ""
-
-msgctxt "#30011"
-msgid "Increment used by the speed up/down keys (PgUp and PgDn) and by the speed picker dialog."
-msgstr ""
-
-# Minimum speed
-msgctxt "#30020"
-msgid "Minimum speed"
-msgstr ""
-
-msgctxt "#30021"
-msgid "Lower bound for playback speed. Applied to the speed up/down keys and the speed picker dialog."
-msgstr ""
-
-# Maximum speed
-msgctxt "#30030"
-msgid "Maximum speed"
-msgstr ""
-
-msgctxt "#30031"
-msgid "Upper bound for playback speed. Applied to the speed up/down keys and the speed picker dialog."
 msgstr ""
 
 # Default book speed
@@ -53,7 +26,7 @@ msgid "Default book speed"
 msgstr ""
 
 msgctxt "#30041"
-msgid "Starting speed for books with no remembered per-book setting. Clamped to the minimum/maximum range above."
+msgid "Starting speed for books with no remembered per-book setting. Change it while playing from the music OSD or the Now playing row."
 msgstr ""
 
 # Default podcast speed
@@ -62,7 +35,7 @@ msgid "Default podcast speed"
 msgstr ""
 
 msgctxt "#30051"
-msgid "Starting speed for podcasts with no remembered per-podcast setting. Clamped to the minimum/maximum range above."
+msgid "Starting speed for podcasts with no remembered per-podcast setting."
 msgstr ""
 
 # Remember per-book
@@ -81,27 +54,6 @@ msgstr ""
 
 msgctxt "#30071"
 msgid "How often playback progress is sent back to the AudioBookShelf server, in seconds."
-msgstr ""
-
-# Speed step option labels (must be a string ID, hence one per option)
-msgctxt "#30090"
-msgid "0.05"
-msgstr ""
-
-msgctxt "#30091"
-msgid "0.10"
-msgstr ""
-
-msgctxt "#30092"
-msgid "0.15"
-msgstr ""
-
-msgctxt "#30093"
-msgid "0.20"
-msgstr ""
-
-msgctxt "#30094"
-msgid "0.25"
 msgstr ""
 
 # Items per page
