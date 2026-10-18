@@ -264,12 +264,11 @@ def _author_names(meta):
 
 
 def _author_entries(client, meta, library_id=None):
-    """``[(name, image_url), ...]`` for the info dialog's artist/cast slots.
+    """``[(name, image_url), ...]`` for the authors of an item.
 
     Book listings do not include author ids. The photo comes from the
-    library's author index, keyed on name. DialogVideoInfo (which is what
-    the i button opens for these musicvideo items) draws Container(50) from
-    setCast thumbnails — ListItem.Art(artist) alone is not a slot there.
+    library's author index, keyed on name, and travels as the row's artist
+    art: a song has no cast to carry it.
     """
     index = get_author_index(client, library_id)
     entries = []
@@ -420,50 +419,8 @@ def add_playable(label, url, art=None, info=None, progress=None, context=None):
         li.setArt(art)
     if context:
         li.addContextMenuItems(context)
-    if info and use_paplayer():
+    if info:
         _set_music_info(li.getMusicInfoTag(), info, progress)
-    elif info:
-        tag = li.getVideoInfoTag()
-        tag.setMediaType("musicvideo")
-        if info.get("title"):
-            tag.setTitle(info["title"])
-        # DialogVideoInfo for musicvideo fills Container(50) from m_artist
-        # via the music library, then skips setCast when the names match.
-        # Author photos therefore have to travel as cast thumbnails, and
-        # setArtists must not repeat those names. ListItem.Artist is empty
-        # on rows that have a photo; the name is on the cast item instead.
-        cast_items = [
-            (name, thumb or "") for name, thumb in (info.get("cast") or []) if name
-        ]
-        has_cast_art = any(thumb for _name, thumb in cast_items)
-        if info.get("artist") and not has_cast_art:
-            tag.setArtists([info["artist"]])
-        if cast_items:
-            tag.setCast(
-                [
-                    xbmc.Actor(name, "Author", i, thumb)
-                    for i, (name, thumb) in enumerate(cast_items)
-                ]
-            )
-        if info.get("album"):
-            tag.setAlbum(info["album"])
-        if info.get("duration"):
-            tag.setDuration(int(info["duration"]))
-        if info.get("description"):
-            tag.setPlot(info["description"])
-        if info.get("narrator"):
-            # Narrator is to an audiobook what a writer is to an episode, and
-            # it is the field skins already have a place for.
-            tag.setWriters([info["narrator"]])
-        if info.get("genres"):
-            tag.setGenres(info["genres"])
-        year = _year_of(info.get("year"))
-        if year:
-            tag.setYear(year)
-        last = _epoch_to_str(info.get("last_played"))
-        if last:
-            tag.setLastPlayed(last)
-        _set_resume(tag, info, progress)
     xbmcplugin.addDirectoryItem(HANDLE, url, li, isFolder=False)
 
 
@@ -480,18 +437,12 @@ def _year_of(value):
     return int(match.group(1)) if match else None
 
 
-def use_paplayer():
-    """Whether rows and playback go to PAPlayer rather than VideoPlayer.
-
-    The listing row's tag picks the player: any video tag sends an item to
-    VideoPlayer, and Kodi keeps the row's tag through the plugin resolve. So
-    the rows have to be songs for PAPlayer to play them.
-    """
-    return ADDON.getSetting("player") != "videoplayer"
-
-
 def _set_music_info(tag, info, progress=None):
     """A row as a song: what InfoTagMusic has a field for.
+
+    Songs, because the listing row's tag picks the player: any video tag sends
+    an item to VideoPlayer, and Kodi keeps the row's tag through the plugin
+    resolve.
 
     It has none for the narrator, which leads the description instead, and
     none for a cast, so author photos are only the artist art.
@@ -527,26 +478,6 @@ def _set_music_info(tag, info, progress=None):
     current = float(progress.get("currentTime") or 0)
     # kontell/xbmc#24. Without it a row shows no progress; it still resumes.
     if total > 0 and 0 < current < total and hasattr(tag, "setResumePoint"):
-        tag.setResumePoint(current, total)
-
-
-def _set_resume(tag, info, progress):
-    """Give Kodi a real resume point rather than writing "[42%]" in the title.
-
-    The old label prefix sorted before every plain title (a bracket sorts
-    before A), which is why Continue Listening had to be left server-ordered
-    and the library used a suffix instead. A resume point costs none of that:
-    skins draw their own in-progress indicator from it, and Kodi offers
-    Resume / Start from beginning without being asked.
-    """
-    if not progress:
-        return
-    if progress.get("isFinished"):
-        tag.setPlaycount(1)
-        return
-    total = float(info.get("duration") or 0)
-    current = float(progress.get("currentTime") or 0)
-    if total > 0 and 0 < current < total:
         tag.setResumePoint(current, total)
 
 
@@ -633,31 +564,15 @@ _NAME_SORTS = (
 CONTENT_MENU = ""
 
 
-# Media listings stay on a music content type. Switching to "musicvideos" was
-# tried to get Kodi's watched overlay, which it derives from playcount for
-# video content — it does not work here. Kodi synthesises that overlay from
-# its own library, and these items are not in it: measured with
-# content="musicvideos" on a finished episode, ListItem.PlayCount read "1"
-# and ListItem.Overlay was still empty. The change also added Kodi's own
-# "Mark as watched" to the context menu, which writes to Kodi's database
-# rather than to AudioBookShelf and so sat next to ours saying the same thing
-# and meaning something else.
-#
-# playcount is still set: it is true, it costs nothing, and a skin that reads
-# ListItem.PlayCount can use it. The resume point is what Kodi does render
-# for a plugin item, and that works.
-#
-# Rows played by PAPlayer are songs, and so is the listing: Estuary draws a
-# song's progress (kontell/xbmc#24) only in its song list.
+# Media listings are songs, as their rows are: Estuary draws a song's progress
+# (kontell/xbmc#24) only in its song list. A finished row's playcount is set,
+# though Kodi draws its watched overlay only for items in its own library.
+CONTENT_MEDIA = "songs"
 
 
-def _media_content():
-    return "songs" if use_paplayer() else "albums"
-
-
-def _apply_sorts(methods, content=None):
+def _apply_sorts(methods, content=CONTENT_MEDIA):
     """Set content type and register the listed sort methods (first = default)."""
-    xbmcplugin.setContent(HANDLE, _media_content() if content is None else content)
+    xbmcplugin.setContent(HANDLE, content)
     for m in methods:
         xbmcplugin.addSortMethod(HANDLE, m)
 
@@ -1219,7 +1134,6 @@ def route_continue_listening(client):
             info = {
                 "title": display_title,
                 "artist": meta.get("author", ""),
-                "cast": authors,
                 "album": podcast_title,
                 "duration": duration,
                 "description": _sanitize_description(ep.get("description", "")),
@@ -1254,7 +1168,6 @@ def route_continue_listening(client):
             info = {
                 "title": display_title,
                 "artist": meta.get("authorName", ""),
-                "cast": authors,
                 "album": meta.get("seriesName", ""),
                 "duration": duration,
                 "description": _sanitize_description(meta.get("description", "")),
@@ -1515,34 +1428,14 @@ def _add_library_item(
         author = meta.get("author", "")
         description = meta.get("description", "")
         genres = meta.get("genres")
-        if use_paplayer():
-            tag = li.getMusicInfoTag()
-            tag.setMediaType("album")
-            tag.setTitle(title)
-            tag.setAlbum(title)
-            if author:
-                tag.setArtist(author)
-            if description:
-                tag.setComment(_sanitize_description(description))
-            if genres:
-                tag.setGenres(genres)
-            xbmcplugin.addDirectoryItem(HANDLE, url, li, isFolder=True)
-            return
-        tag = li.getVideoInfoTag()
-        tag.setMediaType("musicvideo")
+        tag = li.getMusicInfoTag()
+        tag.setMediaType("album")
         tag.setTitle(title)
+        tag.setAlbum(title)
         if author:
-            tag.setArtists([author])
-        if authors:
-            tag.setCast(
-                [
-                    xbmc.Actor(name, "Author", i, thumb or "")
-                    for i, (name, thumb) in enumerate(authors)
-                    if name
-                ]
-            )
+            tag.setArtist(author)
         if description:
-            tag.setPlot(_sanitize_description(description))
+            tag.setComment(_sanitize_description(description))
         if genres:
             tag.setGenres(genres)
         xbmcplugin.addDirectoryItem(HANDLE, url, li, isFolder=True)
@@ -1554,7 +1447,6 @@ def _add_library_item(
         info = {
             "title": title,
             "artist": meta.get("authorName", ""),
-            "cast": authors,
             "album": meta.get("seriesName", ""),
             "narrator": meta.get("narratorName", ""),
             "duration": duration,
@@ -1645,21 +1537,12 @@ def route_authors_list(client, library_id):
         li.setIsFolder(True)
         li.setArt(art)
         description = author.get("description", "")
-        if use_paplayer():
-            tag = li.getMusicInfoTag()
-            tag.setMediaType("artist")
-            tag.setTitle(name)
-            tag.setArtist(name)
-            if description:
-                tag.setComment(_sanitize_description(description))
-        else:
-            tag = li.getVideoInfoTag()
-            tag.setMediaType("musicvideo")
-            tag.setTitle(name)
-            tag.setArtists([name])
-            tag.setCast([xbmc.Actor(name, "Author", 0, image)])
-            if description:
-                tag.setPlot(_sanitize_description(description))
+        tag = li.getMusicInfoTag()
+        tag.setMediaType("artist")
+        tag.setTitle(name)
+        tag.setArtist(name)
+        if description:
+            tag.setComment(_sanitize_description(description))
         xbmcplugin.addDirectoryItem(HANDLE, url, li, isFolder=True)
 
     _apply_sorts(_NAME_SORTS, content=CONTENT_MENU)
@@ -1796,11 +1679,9 @@ def route_recent_episodes(client, library_id):
             "coverPath": podcast.get("coverPath"),
         }
         art = _cover_art(client, cover_source, item_id=item_id)
-        authors = _author_entries(client, podcast_meta)
         info = {
             "title": ep_title,
             "artist": podcast_meta.get("author", ""),
-            "cast": authors,
             "album": podcast_title,
             "duration": duration,
             "description": _sanitize_description(ep.get("description", "")),
@@ -2140,53 +2021,12 @@ def route_play_track(client, item_id, episode_id, session_id, index):
     _resolve_paplayer(client, item_id, episode_id=episode_id)
 
 
-def _resolve_videoplayer(client, item_id, episode_id=None):
-    """The VideoPlayer path, kept until PAPlayer's chapters are confirmed.
-
-    One file only: the first. Tempo is Kodi's, set by the service.
-    """
-    session = client.start_playback(item_id, episode_id=episode_id)
-    tracks = (session or {}).get("audioTracks", [])
-    if not tracks:
-        xbmcplugin.setResolvedUrl(HANDLE, False, xbmcgui.ListItem())
-        return
-    record = _session_record(client, session, item_id, episode_id)
-    _save_session(record)
-    meta = record["media_metadata"]
-
-    track = tracks[0]
-    li = xbmcgui.ListItem(path=_track_url_for(record, 0))
-    li.setArt(meta["art"])
-    li.setContentLookup(False)
-    li.setMimeType(track.get("mimeType", "audio/mp4"))
-    vtag = li.getVideoInfoTag()
-    vtag.setTitle(meta["title"])
-    if meta["author"]:
-        vtag.setArtists([meta["author"]])
-    if episode_id and meta["album"]:
-        vtag.setAlbum(meta["album"])
-    if meta["description"]:
-        vtag.setPlot(meta["description"])
-    vtag.setDuration(int(record["duration"]))
-    vtag.setMediaType("musicvideo")
-    start_time = record["start_time"]
-    if start_time > 0:
-        # VideoPlayer resumes from the video tag's resume point, which
-        # ResumeTime sets and which the resolve keeps.
-        li.setProperty("ResumeTime", str(int(start_time)))
-        li.setProperty("TotalTime", str(int(record["duration"])))
-    xbmcplugin.setResolvedUrl(HANDLE, True, li)
-
-
 def _resolve_playback(client, item_id, episode_id=None, from_start=False):
     """Create an ABS session and resolve the item to its audio."""
     # Whatever is about to play will have moved by the time the user is back
     # in a listing, so don't let the cached map outlive this.
     invalidate_progress_cache()
-    if use_paplayer():
-        _resolve_paplayer(client, item_id, episode_id, from_start)
-    else:
-        _resolve_videoplayer(client, item_id, episode_id)
+    _resolve_paplayer(client, item_id, episode_id, from_start)
 
 
 def route_play_book(client, item_id, from_start=False):

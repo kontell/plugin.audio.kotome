@@ -172,21 +172,6 @@
           <default>true</default>
           <control type="toggle"/>
         </setting>
-        <!-- Not shown. Which player core rows and playback go to; VideoPlayer
-             stays selectable only until PAPlayer's chapters are confirmed on
-             devices. -->
-        <setting id="player" type="string">
-          <level>0</level>
-          <default>paplayer</default>
-          <visible>false</visible>
-          <constraints>
-            <options>
-              <option>paplayer</option>
-              <option>videoplayer</option>
-            </options>
-          </constraints>
-          <control type="spinner" format="string"/>
-        </setting>
       </group>
     </category>
     <category id="sleep" label="30200" help="30201">
