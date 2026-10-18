@@ -149,6 +149,8 @@ jobs:
           else
             changes="Release $version"
           fi
+          # This branch only: every release says which Kodi it is for.
+          changes+=$'\n\n'"This is a pre-release for Kodi 23 with the kontell/xbmc consolidated build. It needs that build: stock Kodi 23 does not have the tempo, chapters or fixes it relies on."
           EOF="$(dd if=/dev/urandom bs=15 count=1 status=none | base64)"
           {
             echo "changes<<$EOF"
@@ -164,4 +166,8 @@ jobs:
           name: ${{ env.APP_ID }} ${{ steps.meta.outputs.version }}
           body: ${{ steps.meta.outputs.changes }}
           draft: true
+          # This branch only. A published draft is a GitHub pre-release, so
+          # repository.kontell's dev repository serves it and the stable one
+          # does not.
+          prerelease: true
           files: dist/*.zip
