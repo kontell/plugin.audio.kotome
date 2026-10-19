@@ -64,31 +64,45 @@ def get_client():
 
 
 def _close_active_session(client, session, label="session"):
-    """Sync + close an ABS session, but never sync position=0 over a valid
-    resume point — playback may have failed to start (e.g. HTTP error),
-    leaving last_time at 0 even though start_time was the user's bookmark.
-    Syncing 0 back to ABS would clobber the bookmark and remove the book
-    from Continue Listening.
+    """Sync the last second heard, and close the session.
+
+    A session nothing was heard from is closed without a sync: playback
+    failed to start, or a Kodi killed mid-book left its file behind. It has
+    no position of its own to give the server, and syncing where it started
+    would put the bookmark back over a newer one.
     """
     if not (client and session):
         return
     sid = session.get("session_id")
-    last = session.get("last_time", 0) or 0
-    start = session.get("start_time", 0) or 0
-    dur = session.get("duration", 0)
+    last = session.get("last_time")
     try:
-        if last < 5 and start > 30:
+        if last is None:
             xbmc.log(
-                "Kotome: skip sync on close ({} last={:.0f}s, "
-                "start={:.0f}s — playback never resumed)".format(label, last, start),
+                "Kotome: {} {} was never heard; closing it without a sync".format(
+                    label, sid
+                ),
                 xbmc.LOGINFO,
             )
         else:
-            client.sync_session(sid, last, dur, 0)
+            client.sync_session(sid, last, session.get("duration", 0), 0)
         client.close_session(sid)
         xbmc.log("Kotome: closed {} {}".format(label, sid), xbmc.LOGINFO)
     except Exception as e:
         xbmc.log("Kotome: error closing {}: {}".format(label, e), xbmc.LOGWARNING)
+
+
+def _end_session(client, session, win, label="session"):
+    """Close the session with ABS, and forget it."""
+    _close_active_session(client, session, label)
+    playing.clear_session(session["session_id"])
+    clear_kotome_properties(win)
+
+
+def _follow_record(session, saved):
+    """Take what main.py rewrites in the session file, when it plays the book
+    again from another file in the same session."""
+    for key in ("queued", "expect"):
+        session[key] = saved.get(key)
 
 
 # Consecutive polls of an inactive screensaver that mean the user is really
@@ -642,12 +656,8 @@ def run():
     tempo = playing.TempoKeeper()
     last_tempo_check = 0
     last_now_playing = False
-    # Until this wall-clock time a pause in playback is a file changing, not
-    # the end of the book.
-    hold_until = 0
-    last_heard = 0
-    # When playback was first seen stopped, for the callback saying why.
-    stop_seen = 0
+    # When each of the session's files was last heard playing, by track index.
+    heard = {}
     sleep_controller = SleepModeController()
 
     # An addon update restores the zip's <reuselanguageinvoker>true</>, so a
@@ -684,47 +694,34 @@ def run():
                 apply_reuse_invoker(notify=True)
 
         now = time.time()
-        if not player.isPlaying():
-            if active_session and not (player.ended or player.stopped):
-                # The callback that says whether the file ended or was stopped
-                # can arrive after isPlaying() turns false.
-                stop_seen = stop_seen or now
-                if now - stop_seen < 2:
-                    continue
-            stop_seen = 0
+        stopped = player.stop_reason(now)
+        if stopped is not None:
             if active_session:
-                session_file = playing.load_session() or {}
-                same = session_file.get("session_id") == active_session.get(
-                    "session_id"
-                )
-                # main.py played the book again from another file and the new
-                # file has not been heard yet. Bounded, in case it never is.
-                switched_at = session_file.get("switched_at", 0)
-                switching = last_heard < switched_at and now - switched_at < 15
-                if same and (now < hold_until or switching):
+                if stopped == "unknown":
                     continue
-                if (
-                    player.ended
-                    and not session_file.get("queued")
-                    and playing.play_next(
-                        active_session, active_session.get("position")
+                saved = playing.load_session() or {}
+                if saved.get("session_id") == active_session["session_id"]:
+                    _follow_record(active_session, saved)
+                    action = playback.when_stopped(
+                        active_session, heard, now, ended=stopped == "ended"
                     )
-                ):
-                    player.ended = False
-                    hold_until = now + 15
+                else:
+                    # another book has been asked for
+                    action = "close"
+                if action == "wait":
                     continue
-                # Playback stopped — close the session
-                _close_active_session(client, active_session, "session")
+                if action == "next":
+                    player.ended = False
+                    playing.play_next(active_session, active_session["position"])
+                    continue
+                _end_session(client, active_session, win)
                 active_session = None
                 client = None
-                playing.clear_session()
-                clear_kotome_properties(win)
             sleep_controller.on_playback_stopped(win)
             sleep_controller.await_wake()
             continue
 
-        # Audio is playing — check if we have a session to track
-        stop_seen = 0
+        # Something is playing: is it one of our book's files?
         sleep_controller.await_wake(playing_again=True)
         session_data = playing.load_session()
         if not session_data:
@@ -741,29 +738,38 @@ def run():
                 _close_active_session(client, active_session, "previous session")
 
             active_session = session_data
+            heard = {}
             last_sync = now
             client = get_client()
             tempo.start(session_data)
             xbmc.log("Kotome: tracking session {}".format(session_id), xbmc.LOGINFO)
         else:
-            # main.py rewrites it when the book is played again from another
-            # file, in the same session
-            active_session["queued"] = session_data.get("queued")
+            _follow_record(active_session, session_data)
 
         url, file_time = playing.player_state(player)
+        if not url:
+            continue
         position, book_time = playback.locate(
             active_session["tracks"], session_id, url, file_time
         )
         if position is None:
-            # Something else is playing, or our file has not opened yet.
+            # Something else is playing, or a file asked for has not opened yet.
+            if playback.when_stopped(active_session, heard, now) == "wait":
+                continue
+            xbmc.log("Kotome: other media is playing", xbmc.LOGINFO)
+            _end_session(client, active_session, win)
+            active_session = None
+            client = None
+            sleep_controller.on_playback_stopped(win)
             continue
         active_session["position"] = position
-        last_heard = now
-        hold_until = 0
+        heard[active_session["tracks"][position]["index"]] = now
         # What closing the session syncs, so a stop keeps the last second
         # heard rather than the last periodic sync. Not before the player has
-        # reached the resume position.
-        if not (book_time < 5 and active_session.get("start_time", 0) > 30):
+        # reached the position asked for.
+        asked = (active_session.get("expect") or {}).get("time", 0)
+        reached = playback.reached(book_time, asked)
+        if reached:
             active_session["last_time"] = book_time
 
         if player.av_started:
@@ -780,17 +786,12 @@ def run():
         sleep_controller.tick(player, win)
 
         # Periodic sync
-        if now - last_sync < sync_interval:
+        if not reached or now - last_sync < sync_interval:
             continue
 
         if client:
             try:
                 duration = active_session.get("duration", 0)
-                start_time = active_session.get("start_time", 0)
-                # Guard: don't overwrite a valid resume position with 0 while
-                # the player has not reached it yet.
-                if book_time < 5 and start_time > 30:
-                    continue
                 listened = now - last_sync
                 last_sync = now
                 client.sync_session(session_id, book_time, duration, listened)
@@ -805,8 +806,7 @@ def run():
     # in-flight sleep-mode state so the user's screensaver/volume aren't
     # left on the sleep-mode values across a Kodi restart.
     if active_session:
-        _close_active_session(client, active_session, "session on shutdown")
-        playing.clear_session()
+        _end_session(client, active_session, win, "session on shutdown")
     sleep_controller.on_playback_stopped(win)
     sleep_controller.await_wake(playing_again=True)
     clear_kotome_properties(win)

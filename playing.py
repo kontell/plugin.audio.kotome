@@ -98,7 +98,11 @@ def save_session(record):
     os.replace(tmp, SESSION_FILE)
 
 
-def clear_session():
+def clear_session(session_id):
+    """Remove the session file, unless it now holds another session's."""
+    saved = load_session()
+    if saved is not None and saved.get("session_id") != session_id:
+        return
     try:
         os.remove(SESSION_FILE)
     except OSError:
@@ -170,12 +174,27 @@ def session_record(session, item_id, episode_id, server, metadata):
         "episode_id": episode_id,
         "media_type": media_type,
         "duration": float(session.get("duration") or 0),
-        "start_time": float(session.get("currentTime") or 0),
         "tracks": playback.track_records(session.get("audioTracks")),
         "chapters": session.get("chapters", []),
         "tempo": book_tempo(item_id, media_type),
         "queued": False,
+        # the file last asked for; see playback.when_stopped
+        "expect": None,
         "media_metadata": metadata,
+    }
+
+
+def _expect(record, position, book_time):
+    """Record that file `position` has been asked for, from `book_time`.
+
+    Until the service hears it, a stop or another file playing is the change
+    of file, not the end of the book. `time` is the position the session's
+    sync waits for (playback.reached).
+    """
+    record["expect"] = {
+        "index": record["tracks"][position]["index"],
+        "time": book_time,
+        "at": time.time(),
     }
 
 
@@ -285,6 +304,7 @@ def resolve(handle, record, book_time, invoked):
         "{:.6f}".format(playback.start_percent(record["tracks"][position], book_time)),
     )
     record["queued"] = _queue_rest(record, position, invoked)
+    _expect(record, position, book_time)
     save_session(record)
     xbmcplugin.setResolvedUrl(handle, True, li)
 
@@ -309,28 +329,31 @@ def play_from(record, position, book_time):
             )
         playlist.add(play_track_url(record, later), li)
     record["queued"] = True
-    # Kodi stops the file playing before it opens this one; the service must
-    # not take that for the end of the book.
-    record["switched_at"] = time.time()
+    # Kodi stops the file playing before it opens this one.
+    _expect(record, position, book_time)
     save_session(record)
     xbmc.Player().play(playlist)
 
 
 def play_next(record, position):
-    """Start the file after `position` of a book Kodi is not queueing.
+    """Start the file after `position`, for a book Kodi is not queueing.
 
     A book started outside a playlist (a favourite, PlayMedia) has nothing
-    queued behind its first file. Returns whether there was a next file.
+    queued behind its first file, so the service plays each next one. The
+    expectation goes into the session file as well as `record`, since the
+    service reads it back from there.
     """
-    tracks = record.get("tracks") or []
-    if position is None or position + 1 >= len(tracks):
-        return False
-    xbmc.executebuiltin("PlayMedia({})".format(play_track_url(record, position + 1)))
+    following = position + 1
+    _expect(record, following, record["tracks"][following]["start"])
+    saved = load_session()
+    if saved and saved.get("session_id") == record["session_id"]:
+        saved["expect"] = record["expect"]
+        save_session(saved)
+    xbmc.executebuiltin("PlayMedia({})".format(play_track_url(record, following)))
     xbmc.log(
-        "Kotome: playing file {} of {}".format(position + 2, len(tracks)),
+        "Kotome: playing file {} of {}".format(following + 1, len(record["tracks"])),
         xbmc.LOGINFO,
     )
-    return True
 
 
 def go_to(record, book_time):
@@ -378,6 +401,22 @@ class KotomePlayer(xbmc.Player):
         self.av_started = False
         self.ended = False
         self.stopped = False
+        self._quiet_since = 0
+
+    def stop_reason(self, now):
+        """None while something plays. Otherwise why it stopped: "ended" or
+        "stopped", or "unknown" for up to two seconds, as the callback saying
+        which can arrive after isPlaying() turns false."""
+        if self.isPlaying():
+            self._quiet_since = 0
+            return None
+        if self.ended:
+            return "ended"
+        if self.stopped:
+            return "stopped"
+        if not self._quiet_since:
+            self._quiet_since = now
+        return "unknown" if now - self._quiet_since < 2 else "stopped"
 
     def onPlayBackStarted(self):
         # A file opened. PAPlayer has reset the tempo to 1.0 for it, unless it

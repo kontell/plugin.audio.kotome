@@ -1770,7 +1770,7 @@ def route_play(client, item_id, episode_id=None, from_start=False):
     record = playing.session_record(
         session, item_id, episode_id, client.server_url, metadata
     )
-    book_time = 0.0 if from_start else record["start_time"]
+    book_time = 0.0 if from_start else float(session.get("currentTime") or 0)
     playing.resolve(HANDLE, record, book_time, BASE_URL + sys.argv[2])
 
 

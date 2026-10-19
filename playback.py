@@ -153,3 +153,48 @@ def clock(seconds):
     if hours:
         return "{}:{:02d}:{:02d}".format(hours, minutes, secs)
     return "{}:{:02d}".format(minutes, secs)
+
+
+def reached(book_time, asked):
+    """Whether playback at `book_time` counts as heard, for a start asked for
+    at book time `asked`.
+
+    A player can report the opening of a book for a moment before it has gone
+    to a resume point, so its first seconds do not count while the start
+    asked for is well past them.
+    """
+    return not (book_time < 5 and asked > 30)
+
+
+# How long a file asked for has to start before a silence, or something else
+# playing, is taken at its word.
+OPEN_GRACE = 15
+
+
+def when_stopped(session, heard, now, ended=False, grace=OPEN_GRACE):
+    """What to do while none of this session's files plays: "wait", "next" or
+    "close".
+
+    `heard` maps a track index to when the service last heard that file play.
+    `session["expect"]` is the file last asked for, and when: by the resolve,
+    by a jump to another file, or by the service playing the next. Until that
+    file has been heard, for up to `grace` seconds, the silence or the other
+    file is the change of file: "wait". A file that ended with nothing queued
+    behind it, in a book with more: "next". Anything else ends the session.
+    """
+    expect = session.get("expect")
+    if (
+        expect
+        and now - expect["at"] < grace
+        and heard.get(expect["index"], 0) < expect["at"]
+    ):
+        return "wait"
+    position = session.get("position")
+    if (
+        ended
+        and not session.get("queued")
+        and position is not None
+        and position + 1 < len(session.get("tracks") or [])
+    ):
+        return "next"
+    return "close"

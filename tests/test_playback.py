@@ -117,5 +117,64 @@ class ChapterTests(unittest.TestCase):
         self.assertEqual(playback.clock(-4), "0:00")
 
 
+class StopTests(unittest.TestCase):
+    """What a silence, or another file playing, means for the session."""
+
+    def setUp(self):
+        # The listener jumped from file 1 to file 2 at wall-clock 1000.
+        self.session = {
+            "tracks": playback.track_records(SESSION_TRACKS),
+            "queued": True,
+            "position": 0,
+            "expect": {"index": 2, "time": 650.0, "at": 1000.0},
+        }
+
+    def test_waits_for_the_file_asked_for(self):
+        self.assertEqual(playback.when_stopped(self.session, {}, 1001.0), "wait")
+        # file 1 was still heard just after the jump was asked for
+        heard = {1: 1000.2}
+        self.assertEqual(playback.when_stopped(self.session, heard, 1001.0), "wait")
+        # but not for ever
+        self.assertEqual(playback.when_stopped(self.session, heard, 1015.0), "close")
+
+    def test_closes_once_the_file_asked_for_has_played(self):
+        # a stop, or other media playing
+        heard = {1: 1000.2, 2: 1003.0}
+        self.assertEqual(playback.when_stopped(self.session, heard, 1004.0), "close")
+        no_ask = dict(self.session, expect=None)
+        self.assertEqual(playback.when_stopped(no_ask, heard, 1004.0), "close")
+
+    def test_next_for_an_unqueued_file_that_ended_with_more_to_come(self):
+        unqueued = dict(self.session, queued=False, expect=None)
+        heard = {1: 990.0}
+        self.assertEqual(
+            playback.when_stopped(unqueued, heard, 1000.0, ended=True), "next"
+        )
+        # stopped by the listener
+        self.assertEqual(playback.when_stopped(unqueued, heard, 1000.0), "close")
+        # the playlist holds the rest
+        self.assertEqual(
+            playback.when_stopped(self.session, {2: 1003.0}, 1004.0, ended=True),
+            "close",
+        )
+        # the last file
+        last = dict(unqueued, position=2)
+        self.assertEqual(
+            playback.when_stopped(last, heard, 1000.0, ended=True), "close"
+        )
+        # nothing of the book was heard
+        unheard = dict(unqueued, position=None)
+        self.assertEqual(
+            playback.when_stopped(unheard, {}, 1000.0, ended=True), "close"
+        )
+
+    def test_reached(self):
+        # the opening of a book resumed half an hour in
+        self.assertFalse(playback.reached(0.4, 1800.0))
+        self.assertTrue(playback.reached(1800.2, 1800.0))
+        # Play from the start
+        self.assertTrue(playback.reached(2.0, 0.0))
+
+
 if __name__ == "__main__":
     unittest.main()

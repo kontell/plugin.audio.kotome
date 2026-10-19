@@ -89,9 +89,13 @@ Credentials live in hidden add-on settings, not a file, so a settings `<dependen
 
 - Later files are queued as `?action=play_track&session_id=…&index=n`. `route_play_track` resolves one from the session file while its session is open, which is on Kodi's main thread shortly before the current file ends, so it makes no server call. A path from a closed session (Kodi's playlist history keeps them) starts a new session from the server's position instead, rebuilding the queue.
 - Playing a row from a music window or a widget queues every row beside it (Play next song automatically). `_queue_rest` removes the others with JSON-RPC `Playlist.Remove`, which moves the player's index as rows before it go; `xbmc.PlayList.remove()` does not.
-- Earlier files are not queued. A jump back goes through the Chapters row, which plays the book again from that file in the same session (`playing.play_from`). The service holds the session open across that stop (`switched_at`).
+- Earlier files are not queued. A jump back goes through the Chapters row, which plays the book again from that file in the same session (`playing.play_from`). The service holds the session open across that stop (below).
 - A book started outside a playlist (a favourite, PlayMedia, Play from the start) has nothing queued; the service plays its next file when one ends (`playing.play_next`).
 - Kodi reports a file it opened by its resolved URL, and one it queued by the plugin path it was queued as. `playback.parse_track_url` reads both.
+
+**What a stop means** is decided in one place, `playback.when_stopped`, which is unit-tested. The session file's `expect` is the file last asked for, and when: the resolve, `playing.play_from` and the service's `playing.play_next` write it. Until the service has heard that file, for up to 15 s, a silence or another file playing is a change of file. After that, a file that ended with nothing queued behind it, in a book with more, goes on to the next file. Anything else closes the session: a stop, the end of the book, or other media playing, which also clears the window properties and cancels the sleep timer.
+
+Closing syncs the last second heard (`last_time`), or nothing if nothing of the session was heard: a failed start or a session file left by a killed Kodi has no position to give the server. A time in the book's first seconds does not count as heard while the start asked for (`expect.time`) is well past them (`playback.reached`), because the player can report the opening for a moment before it reaches a resume point.
 
 **Book time** is `tracks[i].start + Player.getTime()`, with `i` from the file playing. `playback.locate` is the one reader: it gives a book time only while one of the session's own files plays, and none for anything else. ABS sync, the chapter properties, the sleep timer's end of chapter and the Chapters row all use it. Kodi's own time and seek bar are per file.
 
