@@ -34,7 +34,7 @@ jobs:
           - name: black
             command: black --check --diff .
           - name: compileall
-            command: python -m compileall -q main.py abs_api.py abs_http.py abs_auth.py abs_discovery.py addonxml.py service.py tools/
+            command: python -m compileall -q main.py abs_api.py abs_http.py abs_auth.py abs_discovery.py addonxml.py playback.py playing.py service.py tools/
           - name: unittest
             command: python -m unittest discover -s tests -t . -p 'test_*.py'
     steps:
@@ -77,30 +77,6 @@ jobs:
           if [[ "$tag" != "$version" ]]; then
             echo "tag v$tag does not match addon.xml version $version" >&2
             exit 1
-          fi
-
-      - name: Warn if addon.xml <news> is stale
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
-        run: |
-          set -euo pipefail
-          # This addon hand-maintains <news> in addon.xml, which is what Kodi
-          # shows when browsing the repository. Because it is present,
-          # generate_repo.py will NOT fall back to changelog.txt — so a <news>
-          # left at the previous version silently advertises the wrong release
-          # notes. A notice, not a failure: the wording is a judgement call.
-          version="$(python3 -c "
-          import xml.etree.ElementTree as ET
-          print(ET.parse('addon.xml').getroot().get('version'))
-          ")"
-          news="$(python3 -c "
-          import xml.etree.ElementTree as ET
-          node = ET.parse('addon.xml').getroot().find('.//news')
-          print((node.text or '').strip() if node is not None else '')
-          ")"
-          if [[ -n "$news" && "$news" != *"$version"* ]]; then
-            echo "::warning::addon.xml <news> does not mention $version — it is what the"\
-                 "repository shows when browsing, and it takes priority over changelog.txt."
           fi
 
       - name: Upload artifact
@@ -149,6 +125,8 @@ jobs:
           else
             changes="Release $version"
           fi
+          # This branch only: every release says which Kodi it is for.
+          changes+=$'\n\n'"This is a pre-release for Kodi 23 with the kontell/xbmc consolidated build. It needs that build: stock Kodi 23 does not have the tempo, chapters or fixes it relies on."
           EOF="$(dd if=/dev/urandom bs=15 count=1 status=none | base64)"
           {
             echo "changes<<$EOF"
@@ -164,4 +142,8 @@ jobs:
           name: ${{ env.APP_ID }} ${{ steps.meta.outputs.version }}
           body: ${{ steps.meta.outputs.changes }}
           draft: true
+          # This branch only. A published draft is a GitHub pre-release, so
+          # repository.kontell's dev repository serves it and the stable one
+          # does not.
+          prerelease: true
           files: dist/*.zip

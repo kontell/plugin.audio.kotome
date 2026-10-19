@@ -1,3 +1,21 @@
+v1.90.0
+- Kodi 23 pre-release. Needs the kontell/xbmc consolidated build of Kodi 23;
+  Omega and Piers stay on 1.x.
+- Plays through Kodi's music player, with Kodi's own tempo. inputstream.tempo
+  is no longer needed.
+- New: chapters in the player, on the seek bar and in Kodi's chapter list.
+  Next and Previous go chapter by chapter, then on to the next file.
+- New: books in several files play as one, without a gap between files.
+- New: Chapters, under Now playing, lists the whole book's chapters and goes
+  to any of them, in another file too.
+- New: Play from the start, on the context menu of a book in progress.
+- Speed changed from the player's OSD is remembered for the book.
+- Resume lands where the server says, even 40 hours into a single file.
+- Removed: the speed step, minimum and maximum settings (the range is now
+  Kodi's, 0.5 to 5), and the Koshelf.* window properties.
+- Known: the narrator now leads the description, and author photos appear
+  only as the artist art.
+
 v1.1.0
 - New: Find servers on the local network.
 - New: Recently Added, at the top of each book library.

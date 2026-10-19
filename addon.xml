@@ -1,11 +1,13 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="plugin.audio.kotome"
        name="Kotome"
-       version="1.1.0"
+       version="1.90.0"
        provider-name="kontell">
   <requires>
-    <import addon="xbmc.python" version="3.0.0"/>
-    <import addon="inputstream.tempo" minversion="0.3.10"/>
+    <!-- 3.2.0 is the kontell/xbmc consolidated build of Kodi 23, which this
+         line needs: PAPlayer's tempo and chapters come from it. Stock Kodi 23
+         is 3.1.0, so the repository serves this nowhere else. -->
+    <import addon="xbmc.python" version="3.2.0"/>
   </requires>
   <extension point="xbmc.python.pluginsource" library="main.py">
     <provides>audio</provides>
@@ -19,10 +21,9 @@
          close its handle — see router() in main.py. -->
     <reuselanguageinvoker>true</reuselanguageinvoker>
     <platform>all</platform>
-    <summary lang="en">AudioBookShelf client with tempo</summary>
-    <description lang="en">Browse and play audiobooks and podcasts from your AudioBookShelf server, at whatever speed you like. Playback speed is adjustable per book with pitch correction, progress syncs back to the server, and a sleep timer fades out and stops on its own.</description>
+    <summary lang="en">AudioBookShelf client</summary>
+    <description lang="en">Browse and play audiobooks and podcasts from your AudioBookShelf server</description>
     <license>MIT</license>
-    <news>v1.1.0 Find servers on the local network from Settings, a Recently Added shelf in each book library, and podcast recent episodes that look like Continue Listening — episode title, show cover, no show name in the label. Author photos now appear in the information dialog. Opening the add-on unsigned-in no longer pops a dialog; the root is Settings. New: Reuse language invoker toggle (off if several skin widgets load plugin:// paths at once; needs a Kodi restart).</news>
     <assets>
       <icon>resources/icon.png</icon>
       <fanart>resources/fanart.jpg</fanart>

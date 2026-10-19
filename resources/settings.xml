@@ -143,44 +143,6 @@
     </category>
     <category id="playback" label="30000" help="30001">
       <group id="1">
-        <setting id="speed_step" type="string" label="30010" help="30011">
-          <level>0</level>
-          <default>0.10</default>
-          <constraints>
-            <options>
-              <option label="30090">0.05</option>
-              <option label="30091">0.10</option>
-              <option label="30092">0.15</option>
-              <option label="30093">0.20</option>
-              <option label="30094">0.25</option>
-            </options>
-          </constraints>
-          <control type="spinner" format="string"/>
-        </setting>
-        <setting id="min_speed" type="number" label="30020" help="30021">
-          <level>0</level>
-          <default>1.0</default>
-          <constraints>
-            <minimum>0.5</minimum>
-            <step>0.05</step>
-            <maximum>1.0</maximum>
-          </constraints>
-          <control type="slider" format="number">
-            <format>{:.2f}x</format>
-          </control>
-        </setting>
-        <setting id="max_speed" type="number" label="30030" help="30031">
-          <level>0</level>
-          <default>3.0</default>
-          <constraints>
-            <minimum>1.0</minimum>
-            <step>0.05</step>
-            <maximum>5.0</maximum>
-          </constraints>
-          <control type="slider" format="number">
-            <format>{:.2f}x</format>
-          </control>
-        </setting>
         <setting id="book_speed" type="number" label="30040" help="30041">
           <level>0</level>
           <default>1.0</default>
