@@ -20,6 +20,7 @@ import abs_auth
 import abs_discovery
 import abs_http
 import playback
+import playing
 from abs_api import ABSClient
 
 # ── Plugin bootstrap ──
@@ -588,7 +589,7 @@ def route_root(client):
     win = xbmcgui.Window(10000)
     title = win.getProperty("Kotome.NowPlaying.Title")
     if title:
-        speed = _format_speed(_current_tempo() or 1.0)
+        speed = _format_speed(playing.tempo() or 1.0)
         label = "[COLOR orange]{}[/COLOR] [B]Now playing[/B]: {}".format(speed, title)
         add_directory(label, action="speed_dialog")
 
@@ -642,51 +643,20 @@ def _format_speed(speed):
     return "{:.2f}x".format(speed)
 
 
-def _jsonrpc(method, params=None):
-    """The result of a JSON-RPC call, or {} if it failed."""
-    request = {"jsonrpc": "2.0", "id": 1, "method": method}
-    if params is not None:
-        request["params"] = params
-    try:
-        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
-    except ValueError:
-        return {}
-    result = response.get("result")
-    return result if result is not None else {}
-
-
-def _active_player_id():
-    players = _jsonrpc("Player.GetActivePlayers") or []
-    return players[0]["playerid"] if players else None
-
-
-def _current_tempo(player_id=None):
-    """Kodi's tempo for what is playing, or None when nothing is."""
-    if player_id is None:
-        player_id = _active_player_id()
-    if player_id is None:
-        return None
-    result = _jsonrpc(
-        "Player.GetProperties", {"playerid": player_id, "properties": ["tempo"]}
-    )
-    return result.get("tempo")
-
-
 def route_speed_dialog():
     """Pick the playback speed: Kodi's tempo, over the range Kodi allows.
 
     The service notices the change and keeps it for the book.
     """
-    player_id = _active_player_id()
+    player_id = playing.active_player_id()
     if player_id is not None:
-        current = _current_tempo(player_id) or 1.0
-        count = int(round((TEMPO_MAX - TEMPO_MIN) / TEMPO_STEP))
-        values = [round(TEMPO_MIN + i * TEMPO_STEP, 2) for i in range(count + 1)]
+        current = playing.tempo(player_id) or 1.0
+        values = playing.tempo_steps()
         labels = [_format_speed(v) for v in values]
         idx = min(range(len(values)), key=lambda i: abs(values[i] - current))
         sel = xbmcgui.Dialog().select("Playback speed", labels, preselect=idx)
         if sel >= 0 and abs(values[sel] - current) > 0.001:
-            _jsonrpc("Player.SetTempo", {"playerid": player_id, "tempo": values[sel]})
+            playing.set_tempo(player_id, values[sel])
             xbmc.executebuiltin(
                 "Notification(Playback Speed, {}, 1200)".format(
                     _format_speed(values[sel])
@@ -698,15 +668,8 @@ def route_speed_dialog():
     )
 
 
+SLEEP_FILE = os.path.join(PROFILE_DIR, "sleep_timer")
 _SLEEP_PRESETS = (5, 10, 15, 30, 45, 60, 90)
-
-
-def _load_session():
-    try:
-        with open(SESSION_FILE) as f:
-            return json.load(f)
-    except (IOError, OSError, ValueError):
-        return None
 
 
 def _book_time(session):
@@ -733,13 +696,13 @@ def _end_of_chapter_minutes():
     """Wall-clock minutes until the current chapter ends, or None if no
     chapter information is available. Adjusts for the current playback
     tempo so a 10-minute chapter at 1.5× is reported as ~6.7 minutes."""
-    session = _load_session()
+    session = playing.load_session()
     if not session or not session.get("chapters"):
         return None
     current = _book_time(session)
     if current is None:
         return None
-    tempo = _current_tempo() or 1.0
+    tempo = playing.tempo() or 1.0
     _position, chapter = playback.chapter_at(session["chapters"], current)
     if chapter is None:
         return None
@@ -1784,67 +1747,10 @@ def route_search(client, library_id, media_type):
 
 # ── Playback ──
 
-SESSION_FILE = os.path.join(PROFILE_DIR, "session.json")
-SPEEDS_FILE = os.path.join(PROFILE_DIR, "speeds.json")
-SLEEP_FILE = os.path.join(PROFILE_DIR, "sleep_timer")
 
-# Kodi's tempo range (kontell/xbmc#17), in the steps its own OSD takes.
-TEMPO_MIN = 0.5
-TEMPO_MAX = 5.0
-TEMPO_STEP = 0.05
-
-
-def _save_session(data):
-    """Write session info to disk for the background service to pick up."""
-    os.makedirs(PROFILE_DIR, exist_ok=True)
-    with open(SESSION_FILE, "w") as f:
-        json.dump(data, f)
-
-
-def _get_float(setting_id, default):
-    try:
-        return float(ADDON.getSetting(setting_id))
-    except (ValueError, TypeError):
-        return default
-
-
-def _clamp(value, lo, hi):
-    return max(lo, min(hi, value))
-
-
-def _load_book_speed(item_id):
-    """Load saved speed for a specific book. Returns None if not found."""
-    try:
-        if os.path.exists(SPEEDS_FILE):
-            with open(SPEEDS_FILE, "r") as f:
-                speeds = json.load(f)
-                return speeds.get(item_id)
-    except Exception:
-        pass
-    return None
-
-
-def _playback_tempo(item_id, media_type):
-    """The book's own speed if it has one, else the default for its kind.
-
-    For podcasts the speed is kept per show, so it is shared by its episodes.
-    """
-    saved = None
-    if ADDON.getSetting("per_book_speed") != "false":
-        saved = _load_book_speed(item_id)
-    if saved is None:
-        saved = _get_float(
-            "podcast_speed" if media_type == "podcast" else "book_speed", 1.0
-        )
-    return round(_clamp(saved, TEMPO_MIN, TEMPO_MAX), 2)
-
-
-def _session_record(client, session, item_id, episode_id):
-    """What the service and later resolves need of a play session.
-
-    Queued files resolve from this rather than from the server: the next file
-    is resolved on Kodi's main thread, shortly before the current one ends.
-    """
+def _now_playing_metadata(client, session, item_id, episode_id):
+    """What each of the book's files shows: title, album, author, description
+    and art."""
     meta = session.get("mediaMetadata", {})
     # displayTitle includes the episode name for podcasts
     title = session.get("displayTitle") or meta.get("title", "")
@@ -1859,151 +1765,33 @@ def _session_record(client, session, item_id, episode_id):
     artist_thumb = _first_artist_art(_author_entries(client, meta))
     if artist_thumb:
         art["artist"] = artist_thumb
-    media_type = session.get("mediaType", "book")
     return {
-        "session_id": session["id"],
-        "server": client.server_url,
-        "item_id": item_id,
-        "episode_id": episode_id,
-        "media_type": media_type,
-        "duration": float(session.get("duration") or 0),
-        "start_time": float(session.get("currentTime") or 0),
-        "started_at": time.time(),
-        "tracks": playback.track_records(session.get("audioTracks")),
-        "chapters": session.get("chapters", []),
-        "tempo": _playback_tempo(item_id, media_type),
-        "queued": False,
-        "media_metadata": {
-            "title": title,
-            # one album per book: Kodi then does not cross-fade from one of its
-            # files to the next unless crossfading album tracks is turned on
-            "album": meta.get("title", "") if episode_id else title,
-            "author": author,
-            "description": _sanitize_description(meta.get("description", "")),
-            "art": art,
-        },
+        "title": title,
+        # one album per book: Kodi then does not cross-fade from one of its
+        # files to the next unless crossfading album tracks is turned on
+        "album": meta.get("title", "") if episode_id else title,
+        "author": author,
+        "description": _sanitize_description(meta.get("description", "")),
+        "art": art,
     }
 
 
-def _track_url_for(record, position):
-    return playback.track_url(
-        record["server"], record["session_id"], record["tracks"][position]["index"]
-    )
-
-
-def _play_track_url(record, position):
-    """The plugin path a queued file plays from, resolved when its turn comes."""
-    args = {
-        "action": "play_track",
-        "item_id": record["item_id"],
-        "session_id": record["session_id"],
-        "index": record["tracks"][position]["index"],
-    }
-    if record.get("episode_id"):
-        args["episode_id"] = record["episode_id"]
-    return build_url(**args)
-
-
-def _track_item(record, position, path):
-    """One of the book's files, as a song PAPlayer plays.
-
-    Each file carries the book's chapters that fall in it, on the file's own
-    clock (kontell/xbmc#31). A file inside one chapter carries that one:
-    PAPlayer shows no chapters for it, where without any it would fall back to
-    the file's own, which can disagree with the server's.
-    """
-    track = record["tracks"][position]
-    meta = record["media_metadata"]
-    li = xbmcgui.ListItem(meta["title"], path=path)
-    li.setArt(meta["art"])
-    tag = li.getMusicInfoTag()
-    tag.setMediaType("song")
-    tag.setTitle(meta["title"])
-    if meta.get("author"):
-        tag.setArtist(meta["author"])
-    if meta.get("album"):
-        tag.setAlbum(meta["album"])
-    if len(record["tracks"]) > 1:
-        tag.setTrack(position + 1)
-    tag.setDuration(int(round(track["duration"])))
-    if meta.get("description"):
-        tag.setComment(meta["description"])
-    chapters = playback.track_chapters(record["chapters"], track)
-    if chapters and hasattr(tag, "setChapters"):
-        tag.setChapters(chapters)
-    return li
-
-
-def _resolved_track(record, position):
-    li = _track_item(record, position, _track_url_for(record, position))
-    li.setContentLookup(False)
-    mime = record["tracks"][position].get("mime")
-    if mime:
-        li.setMimeType(mime)
-    return li
-
-
-def _queue_rest(record, position):
-    """Queue the book's later files behind the one starting, and only those.
-
-    Playing a row from a music window or a widget queues every row beside it
-    (Play next song automatically, on by default), so the next book in the
-    listing would play when this one ends. The other rows go, and the book's
-    later files take their place.
-
-    Returns whether the files were queued. When the row is not the playlist's
-    current item there is no queue to join (PlayMedia, a favourite), and the
-    service starts each next file itself.
-    """
-    playlist = xbmc.PlayList(xbmc.PLAYLIST_MUSIC)
-    current = playlist.getposition()
-    invoked = (BASE_URL + sys.argv[2]).rstrip("/")
-    if not 0 <= current < playlist.size():
-        return False
-    if playlist[current].getPath().rstrip("/") != invoked:
-        return False
-
-    # JSON-RPC rather than PlayList.remove(): it moves the player's index down
-    # as rows before it go, which remove() does not. It is posted to Kodi's
-    # main thread, which is waiting for this resolve, so it lands afterwards,
-    # in order, and after the add() below.
-    for pos in reversed(range(playlist.size())):
-        if pos != current:
-            _jsonrpc("Playlist.Remove", {"playlistid": 0, "position": pos})
-    for later in range(position + 1, len(record["tracks"])):
-        li = _track_item(record, later, _play_track_url(record, later))
-        li.setProperty("IsPlayable", "true")
-        playlist.add(_play_track_url(record, later), li)
-    # A book plays once, in order.
-    xbmc.executebuiltin("PlayerControl(RandomOff)")
-    xbmc.executebuiltin("PlayerControl(RepeatOff)")
-    return True
-
-
-def _resolve_paplayer(client, item_id, episode_id=None, from_start=False):
-    """Resolve to the file that holds the resume position, from that position.
-
-    A book of several files plays as one playlist with one item per file;
-    PAPlayer's gapless transition joins them, and keeps the tempo.
-    """
+def route_play(client, item_id, episode_id=None, from_start=False):
+    """Start an ABS play session for the item and resolve the row to it, from
+    the server's position, or from the start."""
+    # Whatever is about to play will have moved by the time the user is back
+    # in a listing, so don't let the cached map outlive this.
+    invalidate_progress_cache()
     session = client.start_playback(item_id, episode_id=episode_id)
     if not session or not session.get("audioTracks"):
         xbmcplugin.setResolvedUrl(HANDLE, False, xbmcgui.ListItem())
         return
-
-    record = _session_record(client, session, item_id, episode_id)
-    book_time = 0.0 if from_start else record["start_time"]
-    position = playback.track_at(record["tracks"], book_time)
-    li = _resolved_track(record, position)
-    # PAPlayer resumes from a resolved item's StartPercent; a StartOffset set
-    # here does not survive the resolve. kontell/xbmc#34 keeps its fraction.
-    li.setProperty(
-        "StartPercent",
-        "{:.6f}".format(playback.start_percent(record["tracks"][position], book_time)),
+    metadata = _now_playing_metadata(client, session, item_id, episode_id)
+    record = playing.session_record(
+        session, item_id, episode_id, client.server_url, metadata
     )
-    record["queued"] = _queue_rest(record, position)
-    _save_session(record)
-    xbmcplugin.setResolvedUrl(HANDLE, True, li)
+    book_time = 0.0 if from_start else record["start_time"]
+    playing.resolve(HANDLE, record, book_time, BASE_URL + sys.argv[2])
 
 
 def route_play_track(client, item_id, episode_id, session_id, index):
@@ -2013,30 +1801,13 @@ def route_play_track(client, item_id, episode_id, session_id, index):
     over from an earlier session, such as one Kodi's playlist history kept,
     starts a new session from the server's position instead.
     """
-    record = _load_session()
+    record = playing.load_session()
     if record and record.get("session_id") == session_id:
         position = playback.track_by_index(record["tracks"], int(index))
         if position is not None:
-            xbmcplugin.setResolvedUrl(HANDLE, True, _resolved_track(record, position))
+            playing.resolve_queued(HANDLE, record, position)
             return
-    invalidate_progress_cache()
-    _resolve_paplayer(client, item_id, episode_id=episode_id)
-
-
-def _resolve_playback(client, item_id, episode_id=None, from_start=False):
-    """Create an ABS session and resolve the item to its audio."""
-    # Whatever is about to play will have moved by the time the user is back
-    # in a listing, so don't let the cached map outlive this.
-    invalidate_progress_cache()
-    _resolve_paplayer(client, item_id, episode_id, from_start)
-
-
-def route_play_book(client, item_id, from_start=False):
-    _resolve_playback(client, item_id, from_start=from_start)
-
-
-def route_play_episode(client, item_id, episode_id, from_start=False):
-    _resolve_playback(client, item_id, episode_id=episode_id, from_start=from_start)
+    route_play(client, item_id, episode_id)
 
 
 def route_chapters():
@@ -2048,12 +1819,12 @@ def route_chapters():
     xbmcplugin.endOfDirectory(
         HANDLE, succeeded=False, updateListing=False, cacheToDisc=False
     )
-    record = _load_session()
+    record = playing.load_session()
     chapters = (record or {}).get("chapters") or []
     current = _book_time(record) if chapters else None
     if current is None:
         return
-    playing, _chapter = playback.chapter_at(chapters, current)
+    playing_chapter, _chapter = playback.chapter_at(chapters, current)
     labels = [
         "{}  [COLOR gray]{}[/COLOR]".format(
             c.get("title") or "Chapter {}".format(i + 1),
@@ -2061,7 +1832,9 @@ def route_chapters():
         )
         for i, c in enumerate(chapters)
     ]
-    choice = xbmcgui.Dialog().select("Chapters", labels, preselect=max(0, playing - 1))
+    choice = xbmcgui.Dialog().select(
+        "Chapters", labels, preselect=max(0, playing_chapter - 1)
+    )
     if choice < 0:
         return
     target = float(chapters[choice].get("start") or 0)
@@ -2071,29 +1844,7 @@ def route_chapters():
     if index == tracks[position]["index"]:
         xbmc.Player().seekTime(target - tracks[position]["start"])
         return
-    _play_from(record, position, target)
-
-
-def _play_from(record, position, book_time):
-    """Play the book from `book_time` in file `position`, in the open session."""
-    playlist = xbmc.PlayList(xbmc.PLAYLIST_MUSIC)
-    playlist.clear()
-    for later in range(position, len(record["tracks"])):
-        li = _track_item(record, later, _play_track_url(record, later))
-        li.setProperty("IsPlayable", "true")
-        if later == position:
-            # An offset on the played item itself, unlike one on a resolved
-            # item, is honoured: in seconds.
-            li.setProperty(
-                "StartOffset", str(book_time - record["tracks"][position]["start"])
-            )
-        playlist.add(_play_track_url(record, later), li)
-    record["queued"] = True
-    # Kodi stops the file playing before it opens this one; the service must
-    # not take that for the end of the book.
-    record["switched_at"] = time.time()
-    _save_session(record)
-    xbmc.Player().play(playlist)
+    playing.play_from(record, position, target)
 
 
 # ── Router ──
@@ -2181,15 +1932,11 @@ def router():
         route_recent_episodes(client, args["library_id"])
     elif action == "search":
         route_search(client, args["library_id"], args["media_type"])
-    elif action == "play_book":
-        route_play_book(
-            client, args["item_id"], from_start=args.get("from_start") == "1"
-        )
-    elif action == "play_episode":
-        route_play_episode(
+    elif action in ("play_book", "play_episode"):
+        route_play(
             client,
             args["item_id"],
-            args["episode_id"],
+            args.get("episode_id"),
             from_start=args.get("from_start") == "1",
         )
     elif action == "play_track":

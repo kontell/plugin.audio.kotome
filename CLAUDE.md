@@ -39,8 +39,9 @@ without #24 or #31 loses the progress or the chapters and nothing else.
 
 ## Architecture
 
-- `main.py` — plugin entry point, routing, library browsing, playback resolution
-- `service.py` — ABS session sync, book time and chapter properties, tempo, sleep timer
+- `main.py` — plugin entry point, routing, library browsing, the playback routes
+- `service.py` — ABS session sync, book time and chapter properties, sleep timer
+- `playing.py` — playing a book in Kodi: the session file, the files as songs, the queue, the resolve, the chapter jump, and the player and tempo the service watches. Shared by `main.py` and the service, and takes nothing from `sys.argv`
 - `playback.py` — book time, tracks and chapters across a book's files. No Kodi imports
 - `abs_api.py` — AudioBookShelf REST API client
 - `abs_auth.py` — address normalisation, the three auth calls, and the `Credentials` record. Deliberately dialog-free
@@ -79,24 +80,24 @@ Credentials live in hidden add-on settings, not a file, so a settings `<dependen
 
 **PAPlayer plays everything.** Rows are songs (`InfoTagMusic`, media type `song`), because the listing row's tag picks the player: any video tag sends an item to VideoPlayer, and Kodi keeps the row's tag through the plugin resolve. There is no VideoPlayer path; 1.90 removed it once PAPlayer's chapters were confirmed on a device.
 
-1. `_resolve_paplayer()` starts an ABS play session and writes the session file (`session.json`): the session's tracks (`playback.track_records`), chapters, the book's tempo, and what queued files need to resolve without the server.
+1. `route_play()` starts an ABS play session, and `playing.resolve()` writes the session file (`session.json`): the session's tracks (`playback.track_records`), chapters, the book's tempo, and what queued files need to resolve without the server.
 2. It resolves the row to the **file that holds the resume position**, from that position, by `StartPercent` (six decimals, of that file).
 3. The file's URL is `/public/session/<session id>/track/<index>`: ABS serves a session's tracks without a token while the session is open, so nothing in it expires during a long book.
-4. `_queue_rest()` puts the book's later files behind it.
+4. `playing._queue_rest()` puts the book's later files behind it.
 
 **A book of several files is one music playlist, one item per file.** PAPlayer's gapless transition joins them and keeps the tempo.
 
 - Later files are queued as `?action=play_track&session_id=…&index=n`. `route_play_track` resolves one from the session file while its session is open, which is on Kodi's main thread shortly before the current file ends, so it makes no server call. A path from a closed session (Kodi's playlist history keeps them) starts a new session from the server's position instead, rebuilding the queue.
 - Playing a row from a music window or a widget queues every row beside it (Play next song automatically). `_queue_rest` removes the others with JSON-RPC `Playlist.Remove`, which moves the player's index as rows before it go; `xbmc.PlayList.remove()` does not.
-- Earlier files are not queued. A jump back goes through the Chapters row, which plays the book again from that file in the same session (`_play_from`). The service holds the session open across that stop (`switched_at`).
-- A book started outside a playlist (a favourite, PlayMedia, Play from the start) has nothing queued; the service plays its next file when one ends (`play_next_file`).
+- Earlier files are not queued. A jump back goes through the Chapters row, which plays the book again from that file in the same session (`playing.play_from`). The service holds the session open across that stop (`switched_at`).
+- A book started outside a playlist (a favourite, PlayMedia, Play from the start) has nothing queued; the service plays its next file when one ends (`playing.play_next`).
 - Kodi reports a file it opened by its resolved URL, and one it queued by the plugin path it was queued as. `playback.parse_track_url` reads both.
 
 **Book time** is `tracks[i].start + Player.getTime()`, with `i` from the file playing. ABS sync, the chapter properties, the sleep timer's end of chapter and the Chapters row all use it. Kodi's own time and seek bar are per file.
 
 **Chapters.** Each file carries the server's chapters that fall in it, on the file's clock, through `setChapters`; a chapter that crosses a file boundary appears in both. A file inside one chapter carries that one, so PAPlayer, which shows none for fewer than two, does not fall back to the file's own. Where the server has none for a file (one library item holding several books), Kodi falls back to the file's own, and the service clears its chapter properties so a skin falls back with it.
 
-**Tempo** is Kodi's (`Player.SetTempo`), not inputstream.tempo. `TempoKeeper` in the service applies the book's speed when its first file starts and whenever a file is *opened* rather than queued, since PAPlayer starts an opened file at 1.0. A tempo the listener chooses is adopted after two agreeing readings — as a file ends, the player reports 1.0 for a moment — and kept per book in `speeds.json` (per show, for podcasts).
+**Tempo** is Kodi's (`Player.SetTempo`), not inputstream.tempo. `playing.TempoKeeper`, run by the service, applies the book's speed when its first file starts and whenever a file is *opened* rather than queued, since PAPlayer starts an opened file at 1.0. A tempo the listener chooses is adopted after two agreeing readings — as a file ends, the player reports 1.0 for a moment — and kept per book in `speeds.json` (per show, for podcasts).
 
 **Listing resume**: in-progress rows carry `InfoTagMusic.setResumePoint(current, total)` and finished ones `setPlayCount(1)`. Listings are content `songs`: Estuary draws a song's progress only in its song list. Percentages must not go back into labels — a leading `[42%]` sorts before every plain title.
 

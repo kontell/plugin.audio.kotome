@@ -3,7 +3,6 @@
 import json
 import os
 import time
-from urllib.parse import urlencode
 
 import xbmc
 import xbmcaddon
@@ -13,12 +12,12 @@ import xbmcvfs
 import abs_auth
 import addonxml
 import playback
+import playing
+from playing import jsonrpc as _jsonrpc
 from abs_api import ABSClient
 
 ADDON = xbmcaddon.Addon()
 PROFILE_DIR = xbmcvfs.translatePath(ADDON.getAddonInfo("profile"))
-SESSION_FILE = os.path.join(PROFILE_DIR, "session.json")
-SPEEDS_FILE = os.path.join(PROFILE_DIR, "speeds.json")
 SLEEP_FILE = os.path.join(PROFILE_DIR, "sleep_timer")
 SLEEP_STATE_FILE = os.path.join(PROFILE_DIR, "sleep_state.json")
 
@@ -47,38 +46,6 @@ def apply_reuse_invoker(notify=False):
             time=4000,
         )
     return bool(wrote)
-
-
-def load_session():
-    try:
-        if os.path.exists(SESSION_FILE):
-            with open(SESSION_FILE, "r") as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return None
-
-
-def clear_session():
-    try:
-        if os.path.exists(SESSION_FILE):
-            os.remove(SESSION_FILE)
-    except Exception:
-        pass
-
-
-def save_book_speed(item_id, speed):
-    speeds = {}
-    try:
-        if os.path.exists(SPEEDS_FILE):
-            with open(SPEEDS_FILE, "r") as f:
-                speeds = json.load(f)
-    except Exception:
-        pass
-    speeds[item_id] = speed
-    os.makedirs(PROFILE_DIR, exist_ok=True)
-    with open(SPEEDS_FILE, "w") as f:
-        json.dump(speeds, f)
 
 
 def get_client():
@@ -122,19 +89,6 @@ def _close_active_session(client, session, label="session"):
         xbmc.log("Kotome: closed {} {}".format(label, sid), xbmc.LOGINFO)
     except Exception as e:
         xbmc.log("Kotome: error closing {}: {}".format(label, e), xbmc.LOGWARNING)
-
-
-def _jsonrpc(method, params=None):
-    """Run a JSON-RPC call and return the result dict (or {})."""
-    try:
-        req = {"jsonrpc": "2.0", "id": 1, "method": method}
-        if params is not None:
-            req["params"] = params
-        resp = json.loads(xbmc.executeJSONRPC(json.dumps(req)))
-        return resp.get("result", {}) or {}
-    except Exception as e:
-        xbmc.log("Kotome: JSON-RPC error ({}): {}".format(method, e), xbmc.LOGWARNING)
-        return {}
 
 
 # Consecutive polls of an inactive screensaver that mean the user is really
@@ -634,109 +588,6 @@ class KotomeMonitor(xbmc.Monitor):
         self.settings_changed = True
 
 
-class KotomePlayer(xbmc.Player):
-    """Player events the loop acts on, recorded here and handled there.
-
-    The callbacks arrive on Kodi's callback thread; the loop owns the state.
-    """
-
-    def __init__(self):
-        super().__init__()
-        self.starting = False
-        self.av_started = False
-        self.ended = False
-        self.stopped = False
-
-    def onPlayBackStarted(self):
-        # A file opened. PAPlayer has reset the tempo to 1.0 for it, unless it
-        # was queued behind the last one, so the tempo read until AV starts is
-        # not the listener's.
-        self.starting = True
-        self.ended = False
-        self.stopped = False
-
-    def onAVStarted(self):
-        self.av_started = True
-
-    def onPlayBackEnded(self):
-        self.ended = True
-
-    def onPlayBackStopped(self):
-        self.stopped = True
-
-    def onPlayBackError(self):
-        self.stopped = True
-
-
-def _player_id():
-    players = _jsonrpc("Player.GetActivePlayers") or []
-    return players[0]["playerid"] if players else None
-
-
-def _tempo(player_id):
-    result = _jsonrpc(
-        "Player.GetProperties", {"playerid": player_id, "properties": ["tempo"]}
-    )
-    return result.get("tempo")
-
-
-class TempoKeeper:
-    """Keeps the book at its speed in Kodi's own tempo (kontell/xbmc#15).
-
-    The book's speed is applied when its first file starts, and again whenever
-    a file is opened rather than queued, since PAPlayer starts an opened file
-    at 1.0. A change the listener makes, from the OSD or the keys, becomes the
-    book's speed and is kept for it.
-    """
-
-    def __init__(self):
-        self.wanted = None
-        self.item_id = None
-        self.last_saved = None
-        self.seen = None
-
-    def start(self, session_data):
-        self.wanted = float(session_data.get("tempo") or 1.0)
-        self.item_id = session_data.get("item_id")
-        self.last_saved = self.wanted
-        self.seen = None
-
-    def apply(self):
-        player_id = _player_id()
-        if player_id is None or self.wanted is None:
-            return
-        current = _tempo(player_id)
-        if current is not None and abs(current - self.wanted) > 0.001:
-            _jsonrpc("Player.SetTempo", {"playerid": player_id, "tempo": self.wanted})
-            xbmc.log("Kotome: tempo {:.2f}".format(self.wanted), xbmc.LOGINFO)
-
-    def follow(self):
-        """Adopt a tempo the listener chose, and keep it for the book."""
-        player_id = _player_id()
-        if player_id is None:
-            return
-        current = _tempo(player_id)
-        if current is None or self.wanted is None:
-            return
-        if abs(current - self.wanted) <= 0.001:
-            self.seen = None
-        elif self.seen is None or abs(current - self.seen) > 0.001:
-            # Read twice before it is believed: as a file ends, the player
-            # reports 1.0 for a moment before it stops.
-            self.seen = current
-            return
-        else:
-            self.wanted = round(current, 2)
-            self.seen = None
-        if (
-            self.item_id
-            and ADDON.getSetting("per_book_speed") != "false"
-            and self.wanted != self.last_saved
-        ):
-            save_book_speed(self.item_id, self.wanted)
-            self.last_saved = self.wanted
-
-
 def playing_position(session_data, player):
     """(position of the file playing in the book's tracks, time in that file).
 
@@ -790,36 +641,9 @@ def clear_kotome_properties(win):
         _clear_property(win, name)
 
 
-def play_next_file(session_data, position):
-    """Start the file after `position` of a book Kodi is not queueing.
-
-    A book started outside a playlist (a favourite, PlayMedia) has nothing
-    queued behind its first file. Returns whether there was a next file.
-    """
-    tracks = session_data.get("tracks") or []
-    if position is None or position + 1 >= len(tracks):
-        return False
-    args = {
-        "action": "play_track",
-        "item_id": session_data.get("item_id"),
-        "session_id": session_data.get("session_id"),
-        "index": tracks[position + 1]["index"],
-    }
-    if session_data.get("episode_id"):
-        args["episode_id"] = session_data["episode_id"]
-    xbmc.executebuiltin(
-        "PlayMedia(plugin://{}/?{})".format(ADDON.getAddonInfo("id"), urlencode(args))
-    )
-    xbmc.log(
-        "Kotome: playing file {} of {}".format(position + 2, len(tracks)),
-        xbmc.LOGINFO,
-    )
-    return True
-
-
 def run():
     monitor = KotomeMonitor()
-    player = KotomePlayer()
+    player = playing.KotomePlayer()
     win = xbmcgui.Window(10000)
 
     sync_interval = 30
@@ -831,7 +655,7 @@ def run():
     active_session = None
     last_sync = 0
     client = None
-    tempo = TempoKeeper()
+    tempo = playing.TempoKeeper()
     last_tempo_check = 0
     last_now_playing = False
     # Until this wall-clock time a pause in playback is a file changing, not
@@ -885,7 +709,7 @@ def run():
                     continue
             stop_seen = 0
             if active_session:
-                session_file = load_session() or {}
+                session_file = playing.load_session() or {}
                 same = session_file.get("session_id") == active_session.get(
                     "session_id"
                 )
@@ -898,7 +722,9 @@ def run():
                 if (
                     player.ended
                     and not session_file.get("queued")
-                    and play_next_file(active_session, active_session.get("position"))
+                    and playing.play_next(
+                        active_session, active_session.get("position")
+                    )
                 ):
                     player.ended = False
                     hold_until = now + 15
@@ -907,7 +733,7 @@ def run():
                 _close_active_session(client, active_session, "session")
                 active_session = None
                 client = None
-                clear_session()
+                playing.clear_session()
                 clear_kotome_properties(win)
             sleep_controller.on_playback_stopped(win)
             sleep_controller.await_wake()
@@ -916,7 +742,7 @@ def run():
         # Audio is playing — check if we have a session to track
         stop_seen = 0
         sleep_controller.await_wake(playing_again=True)
-        session_data = load_session()
+        session_data = playing.load_session()
         if not session_data:
             continue
 
@@ -994,7 +820,7 @@ def run():
     # left on the sleep-mode values across a Kodi restart.
     if active_session:
         _close_active_session(client, active_session, "session on shutdown")
-        clear_session()
+        playing.clear_session()
     sleep_controller.on_playback_stopped(win)
     sleep_controller.await_wake(playing_again=True)
     clear_kotome_properties(win)
