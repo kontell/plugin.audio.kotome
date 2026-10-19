@@ -172,5 +172,5 @@ There is no mypy gate: `tox.ini` records what adding it would take (start with `
 GitHub Actions:
 
 - `ci.yml` — every PR and push: `black`, `compileall`, an `assets` job that fails when a referenced resource is missing from the tree, and a `package` job uploading an installable PR zip.
-- `release.yml` — on a `v*` tag: re-runs the gates, asserts the tag matches `addon.xml`, drafts a release. On `master` the draft is a **pre-release**, which repository.kontell serves on the `kodi23` dev channel only. It warns when `addon.xml`'s hand-maintained `<news>` does not mention the version being released: because `<news>` is present, the repository generator will not fall back to `changelog.txt`.
+- `release.yml` — on a `v*` tag: re-runs the gates, asserts the tag matches `addon.xml`, drafts a release. On `master` the draft is a **pre-release**, which repository.kontell serves on the `kodi23` dev channel only. `addon.xml` has no `<news>`, so the repository generator takes the release notes from `changelog.txt`.
 - `notify-repo.yml` — tells `repository.kontell` about a published release. Publish the draft yourself; a release published by a workflow using the default `GITHUB_TOKEN` raises no event.

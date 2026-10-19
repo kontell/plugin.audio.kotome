@@ -21,10 +21,9 @@
          close its handle — see router() in main.py. -->
     <reuselanguageinvoker>true</reuselanguageinvoker>
     <platform>all</platform>
-    <summary lang="en">AudioBookShelf client with tempo</summary>
-    <description lang="en">Browse and play audiobooks and podcasts from your AudioBookShelf server, at whatever speed you like. Playback speed is adjustable per book with pitch correction, progress syncs back to the server, and a sleep timer fades out and stops on its own.</description>
+    <summary lang="en">AudioBookShelf client</summary>
+    <description lang="en">Browse and play audiobooks and podcasts from your AudioBookShelf server</description>
     <license>MIT</license>
-    <news>v1.90.0 Kodi 23 pre-release, for the kontell/xbmc consolidated build only. Plays through Kodi's music player with its own tempo (no more inputstream.tempo), with chapters in the player and on the seek bar, Next and Previous by chapter, and books in several files played as one. New: a Chapters list for the whole book, and Play from the start. Speed changed from the OSD is remembered per book.</news>
     <assets>
       <icon>resources/icon.png</icon>
       <fanart>resources/fanart.jpg</fanart>

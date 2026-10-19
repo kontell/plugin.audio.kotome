@@ -79,30 +79,6 @@ jobs:
             exit 1
           fi
 
-      - name: Warn if addon.xml <news> is stale
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
-        run: |
-          set -euo pipefail
-          # This addon hand-maintains <news> in addon.xml, which is what Kodi
-          # shows when browsing the repository. Because it is present,
-          # generate_repo.py will NOT fall back to changelog.txt — so a <news>
-          # left at the previous version silently advertises the wrong release
-          # notes. A notice, not a failure: the wording is a judgement call.
-          version="$(python3 -c "
-          import xml.etree.ElementTree as ET
-          print(ET.parse('addon.xml').getroot().get('version'))
-          ")"
-          news="$(python3 -c "
-          import xml.etree.ElementTree as ET
-          node = ET.parse('addon.xml').getroot().find('.//news')
-          print((node.text or '').strip() if node is not None else '')
-          ")"
-          if [[ -n "$news" && "$news" != *"$version"* ]]; then
-            echo "::warning::addon.xml <news> does not mention $version — it is what the"\
-                 "repository shows when browsing, and it takes priority over changelog.txt."
-          fi
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
