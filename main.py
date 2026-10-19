@@ -672,26 +672,6 @@ SLEEP_FILE = os.path.join(PROFILE_DIR, "sleep_timer")
 _SLEEP_PRESETS = (5, 10, 15, 30, 45, 60, 90)
 
 
-def _book_time(session):
-    """Where in the whole book playback is, from the file playing.
-
-    Kodi's time is within the file. Each file is a track whose start in the
-    book the session file records, and the track's URL names it.
-    """
-    player = xbmc.Player()
-    try:
-        playing = player.getPlayingFile()
-        current = player.getTime()
-    except RuntimeError:
-        return None
-    tracks = session.get("tracks") or []
-    _session_id, index = playback.parse_track_url(playing)
-    position = playback.track_by_index(tracks, index) if index else None
-    if position is None:
-        return current
-    return tracks[position]["start"] + current
-
-
 def _end_of_chapter_minutes():
     """Wall-clock minutes until the current chapter ends, or None if no
     chapter information is available. Adjusts for the current playback
@@ -699,7 +679,7 @@ def _end_of_chapter_minutes():
     session = playing.load_session()
     if not session or not session.get("chapters"):
         return None
-    current = _book_time(session)
+    _position, current = playing.locate(session)
     if current is None:
         return None
     tempo = playing.tempo() or 1.0
@@ -1821,7 +1801,9 @@ def route_chapters():
     )
     record = playing.load_session()
     chapters = (record or {}).get("chapters") or []
-    current = _book_time(record) if chapters else None
+    if not chapters:
+        return
+    _position, current = playing.locate(record)
     if current is None:
         return
     playing_chapter, _chapter = playback.chapter_at(chapters, current)
@@ -1837,14 +1819,11 @@ def route_chapters():
     )
     if choice < 0:
         return
-    target = float(chapters[choice].get("start") or 0)
-    tracks = record["tracks"]
-    position = playback.track_at(tracks, target)
-    _session_id, index = playback.parse_track_url(xbmc.Player().getPlayingFile())
-    if index == tracks[position]["index"]:
-        xbmc.Player().seekTime(target - tracks[position]["start"])
+    # A book stopped while the list was open has had its session closed.
+    latest = playing.load_session()
+    if not latest or latest.get("session_id") != record["session_id"]:
         return
-    playing.play_from(record, position, target)
+    playing.go_to(latest, float(chapters[choice].get("start") or 0))
 
 
 # ── Router ──

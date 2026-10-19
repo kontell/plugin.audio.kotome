@@ -333,7 +333,37 @@ def play_next(record, position):
     return True
 
 
+def go_to(record, book_time):
+    """Play the book from `book_time`: a seek when the file playing holds it,
+    otherwise the book again from the file that does, in the same session."""
+    tracks = record["tracks"]
+    position = playback.track_at(tracks, book_time)
+    player = xbmc.Player()
+    if locate(record, player)[0] == position:
+        player.seekTime(book_time - tracks[position]["start"])
+    else:
+        play_from(record, position, book_time)
+
+
 # ── What the service watches ──
+
+
+def player_state(player=None):
+    """(the file playing, seconds into it), or (None, None) when nothing is."""
+    player = player or xbmc.Player()
+    try:
+        return player.getPlayingFile(), player.getTime()
+    except RuntimeError:
+        return None, None
+
+
+def locate(record, player=None):
+    """(position in the book's tracks, book time) of what is playing, or
+    (None, None) when it is not one of the session's files."""
+    url, seconds = player_state(player)
+    return playback.locate(
+        record.get("tracks") or [], record.get("session_id"), url, seconds
+    )
 
 
 class KotomePlayer(xbmc.Player):

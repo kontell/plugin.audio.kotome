@@ -57,6 +57,36 @@ class TrackTests(unittest.TestCase):
         self.assertEqual(playback.track_by_index(self.tracks, 3), 2)
         self.assertIsNone(playback.track_by_index(self.tracks, 9))
 
+    def test_track_indexes_from_zero_are_kept(self):
+        tracks = playback.track_records(
+            [
+                {"index": 0, "startOffset": 0, "duration": 60},
+                {"index": 1, "startOffset": 60, "duration": 60},
+            ]
+        )
+        self.assertEqual([t["index"] for t in tracks], [0, 1])
+        url = playback.track_url("https://books.example", "s", 0)
+        self.assertEqual(playback.locate(tracks, "s", url, 5.0), (0, 5.0))
+        unnumbered = playback.track_records([{"startOffset": 0}, {"startOffset": 60}])
+        self.assertEqual([t["index"] for t in unnumbered], [1, 2])
+
+    def test_locate_reads_only_this_sessions_files(self):
+        url = playback.track_url("https://books.example", "sess1", 2)
+        self.assertEqual(playback.locate(self.tracks, "sess1", url, 25.0), (1, 625.0))
+        queued = "plugin://plugin.audio.kotome/?action=play_track&item_id=b&session_id=sess1&index=3"
+        self.assertEqual(
+            playback.locate(self.tracks, "sess1", queued, 10.0), (2, 1510.0)
+        )
+        nowhere = (None, None)
+        # another session's file, a file that is not a book's, nothing playing
+        self.assertEqual(playback.locate(self.tracks, "sess2", url, 25.0), nowhere)
+        song = "http://example/song.mp3"
+        self.assertEqual(playback.locate(self.tracks, "sess1", song, 25.0), nowhere)
+        self.assertEqual(playback.locate(self.tracks, "sess1", None, None), nowhere)
+        # a track the session does not have
+        gone = playback.track_url("https://books.example", "sess1", 9)
+        self.assertEqual(playback.locate(self.tracks, "sess1", gone, 5.0), nowhere)
+
 
 class ChapterTests(unittest.TestCase):
     def setUp(self):

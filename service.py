@@ -588,22 +588,6 @@ class KotomeMonitor(xbmc.Monitor):
         self.settings_changed = True
 
 
-def playing_position(session_data, player):
-    """(position of the file playing in the book's tracks, time in that file).
-
-    (None, None) when what is playing is not one of this session's files.
-    """
-    try:
-        playing = player.getPlayingFile()
-        current = player.getTime()
-    except RuntimeError:
-        return None, None
-    session_id, index = playback.parse_track_url(playing)
-    if session_id != session_data.get("session_id"):
-        return None, None
-    return playback.track_by_index(session_data.get("tracks") or [], index), current
-
-
 def set_kotome_properties(win, session_data, book_time, tempo):
     """Window properties for the book playing, in book time."""
     # Where the server has no chapter for this point of the book (one library
@@ -766,14 +750,16 @@ def run():
             # file, in the same session
             active_session["queued"] = session_data.get("queued")
 
-        position, file_time = playing_position(active_session, player)
+        url, file_time = playing.player_state(player)
+        position, book_time = playback.locate(
+            active_session["tracks"], session_id, url, file_time
+        )
         if position is None:
             # Something else is playing, or our file has not opened yet.
             continue
         active_session["position"] = position
         last_heard = now
         hold_until = 0
-        book_time = active_session["tracks"][position]["start"] + file_time
         # What closing the session syncs, so a stop keeps the last second
         # heard rather than the last periodic sync. Not before the player has
         # reached the resume position.

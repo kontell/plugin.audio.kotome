@@ -93,7 +93,7 @@ Credentials live in hidden add-on settings, not a file, so a settings `<dependen
 - A book started outside a playlist (a favourite, PlayMedia, Play from the start) has nothing queued; the service plays its next file when one ends (`playing.play_next`).
 - Kodi reports a file it opened by its resolved URL, and one it queued by the plugin path it was queued as. `playback.parse_track_url` reads both.
 
-**Book time** is `tracks[i].start + Player.getTime()`, with `i` from the file playing. ABS sync, the chapter properties, the sleep timer's end of chapter and the Chapters row all use it. Kodi's own time and seek bar are per file.
+**Book time** is `tracks[i].start + Player.getTime()`, with `i` from the file playing. `playback.locate` is the one reader: it gives a book time only while one of the session's own files plays, and none for anything else. ABS sync, the chapter properties, the sleep timer's end of chapter and the Chapters row all use it. Kodi's own time and seek bar are per file.
 
 **Chapters.** Each file carries the server's chapters that fall in it, on the file's clock, through `setChapters`; a chapter that crosses a file boundary appears in both. A file inside one chapter carries that one, so PAPlayer, which shows none for fewer than two, does not fall back to the file's own. Where the server has none for a file (one library item holding several books), Kodi falls back to the file's own, and the service clears its chapter properties so a skin falls back with it.
 

@@ -18,9 +18,10 @@ def track_records(audio_tracks):
     """What a session file keeps of each track, in book order."""
     records = []
     for track in audio_tracks or []:
+        index = track.get("index")
         records.append(
             {
-                "index": int(track.get("index") or len(records) + 1),
+                "index": int(index) if index is not None else len(records) + 1,
                 "start": float(track.get("startOffset") or 0),
                 "duration": float(track.get("duration") or 0),
                 "mime": track.get("mimeType") or "",
@@ -88,6 +89,21 @@ def track_by_index(tracks, index):
         if track["index"] == index:
             return i
     return None
+
+
+def locate(tracks, session_id, playing_url, file_seconds):
+    """(position in `tracks`, book time) of the file playing, or (None, None)
+    when it is not one of session `session_id`'s files.
+
+    Kodi's time is within the file playing; book time adds the file's start.
+    """
+    playing_id, index = parse_track_url(playing_url)
+    if playing_id is None or playing_id != session_id:
+        return None, None
+    position = track_by_index(tracks, index)
+    if position is None:
+        return None, None
+    return position, tracks[position]["start"] + file_seconds
 
 
 def track_chapters(chapters, track):
