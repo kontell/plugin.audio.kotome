@@ -94,7 +94,7 @@ Credentials live in hidden add-on settings, not a file, so a settings `<dependen
 
 **Book time** is `tracks[i].start + Player.getTime()`, with `i` from the file playing. ABS sync, the chapter properties, the sleep timer's end of chapter and the Chapters row all use it. Kodi's own time and seek bar are per file.
 
-**Chapters.** Each file carries the server's chapters that fall in it, on the file's clock, through `setChapters`; a chapter that crosses a file boundary appears in both. Where the server has none for a file (one library item holding several books), Kodi falls back to the file's own, and the service clears its chapter properties so a skin falls back with it.
+**Chapters.** Each file carries the server's chapters that fall in it, on the file's clock, through `setChapters`; a chapter that crosses a file boundary appears in both. A file inside one chapter carries that one, so PAPlayer, which shows none for fewer than two, does not fall back to the file's own. Where the server has none for a file (one library item holding several books), Kodi falls back to the file's own, and the service clears its chapter properties so a skin falls back with it.
 
 **Tempo** is Kodi's (`Player.SetTempo`), not inputstream.tempo. `TempoKeeper` in the service applies the book's speed when its first file starts and whenever a file is *opened* rather than queued, since PAPlayer starts an opened file at 1.0. A tempo the listener chooses is adopted after two agreeing readings — as a file ends, the player reports 1.0 for a moment — and kept per book in `speeds.json` (per show, for podcasts).
 

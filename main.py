@@ -1908,7 +1908,9 @@ def _track_item(record, position, path):
     """One of the book's files, as a song PAPlayer plays.
 
     Each file carries the book's chapters that fall in it, on the file's own
-    clock (kontell/xbmc#31).
+    clock (kontell/xbmc#31). A file inside one chapter carries that one:
+    PAPlayer shows no chapters for it, where without any it would fall back to
+    the file's own, which can disagree with the server's.
     """
     track = record["tracks"][position]
     meta = record["media_metadata"]
@@ -1927,7 +1929,7 @@ def _track_item(record, position, path):
     if meta.get("description"):
         tag.setComment(meta["description"])
     chapters = playback.track_chapters(record["chapters"], track)
-    if len(chapters) > 1 and hasattr(tag, "setChapters"):
+    if chapters and hasattr(tag, "setChapters"):
         tag.setChapters(chapters)
     return li
 
